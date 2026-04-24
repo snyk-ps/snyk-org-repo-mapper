@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bitbucket-org-repo-mapper"
+version = "0.1.0"
+description = "Map Bitbucket Server repositories to AppSec metadata from YAML and API data."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pyyaml>=6.0.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[project.scripts]
+bitbucket-repo-mapper = "commands.bitbucket_cli:main"
+bitbucket-repo-mapper-from-spreadsheet = "commands.spreadsheet_cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

@@ -5,24 +5,20 @@ Enumerate all repositories on **Bitbucket Server (Data Center)**, read a configu
 ## Requirements
 
 - **Python 3.12+**
-- **[uv](https://docs.astral.sh/uv/getting-started/installation/)** (recommended for installs)
-- A Bitbucket Server instance reachable over HTTPS and a **personal access token (PAT)** with permission to list projects and repositories and read repository content via the REST API
+- **pip** (for installing dependencies from `requirements.txt`)
+- A Bitbucket Server instance reachable over HTTPS and a **personal access token (PAT)** with permission to list projects and repositories and read repository content via the REST API (for the Bitbucket mapper path only)
 
 ## Installation
 
-From the repository root:
+From the repository root, install runtime dependencies:
 
 ```bash
-uv sync
+pip install -r requirements.txt
 ```
 
-To include development dependencies (e.g. pytest):
+This installs **PyYAML** and anything else listed in `requirements.txt`. The application code lives under `src/`; you run it with **Python** and `PYTHONPATH=src` (see [Usage](#usage)).
 
-```bash
-uv sync --all-extras
-```
-
-This installs the package `bitbucket-org-repo-mapper` and its dependencies from `pyproject.toml` and `uv.lock`.
+To run tests, install **pytest** as well (or use an editable install with dev extras: `pip install -e ".[dev]"` from this repo, which follows `pyproject.toml`).
 
 ## Configuration
 
@@ -55,22 +51,29 @@ appSec:
 
 ## Usage
 
-Set the required variables (or rely on `.env`), then run one of the following from the repository root after `uv sync`:
+From the **repository root**, set `PYTHONPATH=src` so Python can import packages under `src/` (`commands`, `common`, etc.). The entry point is **`src/main.py`**: the **first argument** chooses which CLI runs:
+
+| First argument | Role |
+|----------------|------|
+| `bitbucket` | Same behavior as the **`bitbucket-repo-mapper`** console script (Bitbucket Server API + YAML in each repo). |
+| `spreadsheet` | Same behavior as **`bitbucket-repo-mapper-from-spreadsheet`** (build JSON from an `.xlsx` only; no Bitbucket). |
 
 ```bash
-# Console script (recommended)
-uv run bitbucket-repo-mapper
+# Show dispatcher usage
+PYTHONPATH=src python src/main.py -h
 
-# Module
-uv run python -m bitbucket_org_repo_mapper
+# Bitbucket mapper (set BITBUCKET_* or use .env first)
+PYTHONPATH=src python src/main.py bitbucket [OPTIONS]
 
-# Script wrapper under scripts/
-uv run python scripts/bitbucket_repo_mapper.py
+# Spreadsheet-only path
+PYTHONPATH=src python src/main.py spreadsheet [OPTIONS]
 ```
+
+If you install this project in **editable** mode (`pip install -e .`), the same CLIs are also available as **`bitbucket-repo-mapper`** and **`bitbucket-repo-mapper-from-spreadsheet`** on your `PATH` without `PYTHONPATH`.
 
 ### Spreadsheet import (no Bitbucket API)
 
-Use **`bitbucket-repo-mapper-from-spreadsheet`** when you already have an **Excel mapping** (for example AppSec exports) and want the **same JSON outputs** as the mapper—including optional Snyk API Import Tool files—**without** querying Bitbucket or configuring `BITBUCKET_*` credentials.
+Use **`spreadsheet`** as the first argument (or `bitbucket-repo-mapper-from-spreadsheet` after `pip install -e .`) when you already have an **Excel mapping** (for example AppSec exports) and want the **same JSON outputs** as the mapper—including optional Snyk API Import Tool files—**without** querying Bitbucket or configuring `BITBUCKET_*` credentials.
 
 - **Columns:** **A** = APM code, **B** = repository selector (`BB::<project_key>::<repo_slug>`), **D** = repository display name. Columns **C**, **E**, and **F** are ignored.
 - **Filter:** Only rows whose column **B** starts with **`BB::`** are imported. Other prefixes (such as **`PG::`**) are skipped entirely.
@@ -79,16 +82,18 @@ Use **`bitbucket-repo-mapper-from-spreadsheet`** when you already have an **Exce
 Example from the repository root (same as `-i`; you can pass the path alone as a positional argument):
 
 ```bash
-uv run bitbucket-repo-mapper-from-spreadsheet \
+PYTHONPATH=src python src/main.py spreadsheet \
   --input "data/AppSec Repo to APM - Sample.xlsx" \
   -o mapping-from-sheet.json \
   --snyk-orgs-output snyk-orgs.json \
   --snyk-import-output snyk-import.json
 ```
 
-With `-o`, the primary file uses the same **versioned wrapper** format as `bitbucket-repo-mapper`; without `-o`, the command prints a JSON **array** to stdout.
+With `-o`, the primary file uses the same **versioned wrapper** format as the Bitbucket mapper; without `-o`, the command prints a JSON **array** to stdout.
 
 ### CLI options
+
+Options below apply to **`python src/main.py bitbucket`** (and the `bitbucket-repo-mapper` entry point). The spreadsheet command supports its own flags (e.g. `--input` / positional `.xlsx`); run `PYTHONPATH=src python src/main.py spreadsheet -h` for details.
 
 | Option | Description |
 |--------|-------------|
@@ -108,7 +113,7 @@ export BITBUCKET_URL='https://bitbucket.example.com'
 export BITBUCKET_PAT='your-token'
 export BITBUCKET_FILE_PATH='security/appsec.yaml'   # optional
 
-uv run bitbucket-repo-mapper \
+PYTHONPATH=src python src/main.py bitbucket \
   -o mapping.json \
   --snyk-orgs-output snyk-orgs.json \
   --snyk-import-output snyk-import.json
@@ -117,13 +122,13 @@ uv run bitbucket-repo-mapper \
 Print a JSON array to stdout (no resume; full run in memory):
 
 ```bash
-uv run bitbucket-repo-mapper > mapping.json
+PYTHONPATH=src python src/main.py bitbucket > mapping.json
 ```
 
 Limit to 50 repositories in one run:
 
 ```bash
-uv run bitbucket-repo-mapper -o mapping.json --max-repos 50
+PYTHONPATH=src python src/main.py bitbucket -o mapping.json --max-repos 50
 ```
 
 ## Output
@@ -210,14 +215,17 @@ One import target per row in the primary mapping. `orgId` and `integrationId` ar
 }
 ```
 
-Exit codes: `0` success, `1` runtime error (e.g. API failure), `2` invalid or missing configuration.
+Exit codes: `0` success, `1` runtime error (e.g. API failure), `2` invalid or missing configuration, missing/invalid `main.py` subcommand, or usage error when invoking `src/main.py`.
 
 ## Testing
 
 ```bash
-uv sync --all-extras
-uv run pytest
+pip install -r requirements.txt
+pip install pytest
+pytest
 ```
+
+`pytest` picks up `pythonpath = ["src"]` from `pyproject.toml`, so tests resolve imports the same way as `PYTHONPATH=src` at the command line.
 
 ## Project layout
 
@@ -225,7 +233,7 @@ Source layout follows the repository’s **project guidelines** (see `.cursor/ru
 
 | Path | Purpose |
 |------|---------|
-| `src/main.py` | Application entry: runs the Bitbucket mapper CLI (same as `bitbucket-repo-mapper`) |
+| `src/main.py` | Application entry: dispatches to `bitbucket` or `spreadsheet` (see [Usage](#usage)) |
 | `src/commands/` | CLI command modules (`bitbucket_cli`, `spreadsheet_cli`) |
 | `src/common/` | Shared domain logic: mapping rows, YAML/AppSec parsing, primary output files, spreadsheet `.xlsx` ingestion |
 | `src/config/` | Settings loaded from environment variables and optional `.env` |

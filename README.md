@@ -29,6 +29,8 @@ This project helps you onboard Bitbucket Server repositories into Snyk in **thre
      --output snyk-orgs.json
    ```
 
+   Optional: pass **`--group-id`** and **`--template-org-id`** (UUIDs) so each org entry’s `groupId` and `sourceOrgId` are filled instead of placeholder strings.
+
 3. **Stage 3 — import file + IDs** (Snyk API only):
 
    ```bash
@@ -50,7 +52,7 @@ After `pip install -e .`, the same flows are available as `repo-mapper-discover-
 - **Python 3.12+** (see `pyproject.toml`).
 - **Stage 1 (Bitbucket):** HTTPS reachability to Bitbucket Server and a PAT that can list projects/repos and read file content.
 - **Stage 1 (spreadsheet):** An `.xlsx` only; no Bitbucket.
-- **Stage 2:** Paths only; no tokens.
+- **Stage 2:** Paths only; no API tokens. You may pass **`--group-id`** / **`--template-org-id`** on the CLI to embed those UUIDs in `snyk-orgs.json` (still no HTTP).
 - **Stage 3:** Snyk REST credentials (`SNYK_TOKEN`, `SNYK_GROUP_ID`); optional `--snyk-orgs` for a consistency check.
 
 ## Installation
@@ -77,7 +79,7 @@ Discovery is the handoff artifact for Stages 2 and 3. Shape: `version`, `source`
 
 ### Stage 2 — `snyk-orgs`
 
-Reads `--discovery`, writes **`snyk-orgs.json`** in the shape expected for Snyk org creation / import tooling (one org per distinct non-null `apm_code`). No Snyk or Bitbucket HTTP calls. See [Snyk REST — Organizations](https://docs.snyk.io/snyk-api/rest-api/endpoints/organizations) for how you apply this payload in your process.
+Reads `--discovery`, writes **`snyk-orgs.json`** in the shape expected for Snyk org creation / import tooling (one org per distinct non-null `apm_code`). No Snyk or Bitbucket HTTP calls. Optional **`--group-id`** and **`--template-org-id`** set `groupId` and `sourceOrgId` on every row instead of placeholders (each flag is independent). See [Snyk REST — Organizations](https://docs.snyk.io/snyk-api/rest-api/endpoints/organizations) for how you apply this payload in your process.
 
 ### Stage 3 — `snyk-import`
 
@@ -106,7 +108,12 @@ No `BITBUCKET_*` variables.
 
 ### Stage 2
 
-None beyond file paths. `--dry-run` prints JSON to stdout instead of writing `--output`.
+| Flag | Description |
+|------|-------------|
+| `--group-id UUID` | Snyk Group ID written as `groupId` on each org entry (default: placeholder). |
+| `--template-org-id UUID` | Template/source organization ID written as `sourceOrgId` on each org entry (default: placeholder). |
+
+`--dry-run` prints JSON to stdout instead of writing `--output`.
 
 ### Stage 3
 
@@ -129,7 +136,7 @@ If you omit `--env-file`, the CLI loads `.env` from the **current working direct
 |---------|---------|-----------|
 | `discover bitbucket` | Bitbucket → discovery or stdout rows | `-o`, `--env-file`, `--max-repos`, `--flush-interval` |
 | `discover spreadsheet` | `.xlsx` → discovery or stdout rows | `-i` / `--input`, `-o` |
-| `snyk-orgs` | discovery → `snyk-orgs.json` | `--discovery`, `--output`, `--dry-run` |
+| `snyk-orgs` | discovery → `snyk-orgs.json` | `--discovery`, `--output`, `--group-id`, `--template-org-id`, `--dry-run` |
 | `snyk-import` | discovery → `snyk-import.json` + Snyk IDs | `--discovery`, `--output`, `--snyk-orgs` (optional), `--env-file`, `--dry-run` |
 
 ```bash
@@ -172,7 +179,7 @@ Older **wrapper** files used `version` + `rows` + optional `checkpoint` without 
 
 ### `snyk-orgs.json` (Stage 2)
 
-One org per distinct non-null `apm_code` (sorted). Placeholders are intended for substitution before use with Snyk APIs:
+One org per distinct non-null `apm_code` (sorted). By default, `groupId` and `sourceOrgId` use placeholder strings for manual substitution; pass **`--group-id`** and/or **`--template-org-id`** to `snyk-orgs` to emit real UUIDs instead. Example with placeholders:
 
 ```json
 {

@@ -42,3 +42,45 @@ def test_snyk_orgs_from_discovery(tmp_path: Path) -> None:
     org_doc = json.loads(orgs.read_text(encoding="utf-8"))
     assert len(org_doc["orgs"]) == 1
     assert org_doc["orgs"][0]["name"] == "C1"
+
+
+def test_snyk_orgs_with_group_and_template_org_ids(tmp_path: Path) -> None:
+    discovery = tmp_path / "d.json"
+    discovery.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "source": "spreadsheet",
+                "rows": [
+                    {
+                        "apm_code": "X9",
+                        "repository_path": "PK/slug",
+                        "repository_name": "slug",
+                        "production_branch": "",
+                        "bitbucket_project_name": "PK",
+                    }
+                ],
+                "checkpoint": None,
+            }
+        ),
+        encoding="utf-8",
+    )
+    orgs = tmp_path / "orgs.json"
+    gid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    tid = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+    rc = snyk_orgs_main(
+        [
+            "--discovery",
+            str(discovery),
+            "--output",
+            str(orgs),
+            "--group-id",
+            gid,
+            "--template-org-id",
+            tid,
+        ]
+    )
+    assert rc == 0
+    org_doc = json.loads(orgs.read_text(encoding="utf-8"))
+    assert org_doc["orgs"][0]["groupId"] == gid
+    assert org_doc["orgs"][0]["sourceOrgId"] == tid

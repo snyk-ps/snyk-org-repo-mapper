@@ -11,22 +11,33 @@ SNYK_PLACEHOLDER_ORG_ID = "******"
 SNYK_PLACEHOLDER_INTEGRATION_ID = "******"
 
 
-def build_snyk_orgs_document(apm_codes: set[str]) -> dict[str, Any]:
+def build_snyk_orgs_document(
+    apm_codes: set[str],
+    *,
+    group_id: str | None = None,
+    template_org_id: str | None = None,
+) -> dict[str, Any]:
     """Build the org-creation JSON with one entry per distinct APM code.
 
     Args:
         apm_codes: Non-empty APM code strings (caller filters nulls).
+        group_id: If set, written as ``groupId`` for every org; otherwise the
+            placeholder string is used.
+        template_org_id: If set, written as ``sourceOrgId`` for every org;
+            otherwise the placeholder string is used.
 
     Returns:
         JSON object with an ``orgs`` array.
     """
+    gid = group_id if group_id is not None else SNYK_PLACEHOLDER_GROUP_ID
+    src = template_org_id if template_org_id is not None else SNYK_PLACEHOLDER_SOURCE_ORG_ID
     orgs: list[dict[str, str]] = []
     for code in sorted(apm_codes):
         orgs.append(
             {
-                "groupId": SNYK_PLACEHOLDER_GROUP_ID,
+                "groupId": gid,
                 "name": code,
-                "sourceOrgId": SNYK_PLACEHOLDER_SOURCE_ORG_ID,
+                "sourceOrgId": src,
             }
         )
     return {"orgs": orgs}

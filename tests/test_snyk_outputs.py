@@ -19,6 +19,17 @@ def test_build_snyk_orgs_document_sorted_distinct() -> None:
     assert doc["orgs"][0]["sourceOrgId"] == SNYK_PLACEHOLDER_SOURCE_ORG_ID
 
 
+def test_build_snyk_orgs_document_with_resolved_ids() -> None:
+    doc = build_snyk_orgs_document(
+        {"Z"},
+        group_id="11111111-1111-1111-1111-111111111111",
+        template_org_id="22222222-2222-2222-2222-222222222222",
+    )
+    assert doc["orgs"][0]["name"] == "Z"
+    assert doc["orgs"][0]["groupId"] == "11111111-1111-1111-1111-111111111111"
+    assert doc["orgs"][0]["sourceOrgId"] == "22222222-2222-2222-2222-222222222222"
+
+
 def test_apm_codes_from_rows() -> None:
     rows = [
         {"apm_code": "Z"},

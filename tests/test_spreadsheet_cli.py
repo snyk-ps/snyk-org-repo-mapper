@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -117,3 +118,16 @@ def test_main_missing_input(tmp_path) -> None:
     missing = tmp_path / "nope.xlsx"
     rc = main(["--input", str(missing)])
     assert rc == 2
+
+
+def test_main_writes_discovery_json(tmp_path: Path) -> None:
+    inp = tmp_path / "mini.xlsx"
+    inp.write_bytes(_minimal_two_row_xlsx())
+    out = tmp_path / "discovery.json"
+    rc = main(["-i", str(inp), "-o", str(out)])
+    assert rc == 0
+    doc = json.loads(out.read_text(encoding="utf-8"))
+    assert doc["version"] == 1
+    assert doc["source"] == "spreadsheet"
+    assert doc["checkpoint"] is None
+    assert any(r["repository_path"] == "MYPROJ/my-repo" for r in doc["rows"])

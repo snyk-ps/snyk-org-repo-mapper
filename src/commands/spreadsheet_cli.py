@@ -1,4 +1,4 @@
-"""CLI: build mapper JSON from a spreadsheet without calling Bitbucket."""
+"""CLI: Stage 1 spreadsheet discovery (writes discovery JSON)."""
 
 from __future__ import annotations
 
@@ -8,25 +8,17 @@ import sys
 from pathlib import Path
 from typing import Any, Sequence
 
-from common.output_state import (
-    assert_safe_filesystem_path,
-    atomic_write_json,
-    build_primary_document,
-)
+from common.discovery_document import build_discovery_document
+from common.output_state import assert_safe_filesystem_path, atomic_write_json
 from common.spreadsheet.mapping import mapping_rows_from_xlsx
-from snyk.outputs import (
-    apm_codes_from_rows,
-    build_snyk_import_document,
-    build_snyk_orgs_document,
-)
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Construct the spreadsheet import CLI parser."""
+    """Construct the spreadsheet discovery CLI parser."""
     parser = argparse.ArgumentParser(
         description=(
-            "Build primary mapping and optional Snyk JSON files from an .xlsx "
-            "spreadsheet (columns A/B/D). Does not call Bitbucket."
+            "Stage 1 (spreadsheet): build discovery JSON from an .xlsx "
+            "(columns A/B/D). Does not call Bitbucket."
         ),
     )
     parser.add_argument(
@@ -51,29 +43,15 @@ def build_parser() -> argparse.ArgumentParser:
         "-o",
         "--output",
         help=(
-            "Write primary mapping JSON using the versioned wrapper format "
-            "(same as bitbucket-repo-mapper). If omitted, print a JSON array to stdout."
+            "Write discovery JSON (versioned: source=spreadsheet, rows). "
+            "If omitted, print a JSON array of rows to stdout."
         ),
-    )
-    parser.add_argument(
-        "--snyk-orgs-output",
-        type=Path,
-        default=None,
-        metavar="PATH",
-        help="Write Snyk org-creation JSON (one org per distinct non-null apm_code).",
-    )
-    parser.add_argument(
-        "--snyk-import-output",
-        type=Path,
-        default=None,
-        metavar="PATH",
-        help="Write Snyk Bitbucket Server import targets JSON.",
     )
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run the spreadsheet import CLI."""
+    """Run spreadsheet discovery CLI."""
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
 
@@ -81,7 +59,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if inp is None:
         parser.error(
             "input spreadsheet is required: use -i/--input PATH or pass INPUT.xlsx "
-            "(run `bitbucket-repo-mapper-from-spreadsheet`, not `bitbucket-repo-mapper`)."
+            "(run `python main.py discover spreadsheet …`)."
         )
     if (
         args.input_path is not None
@@ -106,20 +84,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.output:
             out_path = Path(args.output)
             assert_safe_filesystem_path(out_path)
-            atomic_write_json(out_path, build_primary_document(rows, last_completed=None))
+            atomic_write_json(
+                out_path,
+                build_discovery_document(rows, "spreadsheet", last_completed=None),
+            )
         else:
             text = json.dumps(rows, indent=2, ensure_ascii=False) + "\n"
             sys.stdout.write(text)
-
-        if args.snyk_orgs_output is not None:
-            so = Path(args.snyk_orgs_output)
-            assert_safe_filesystem_path(so)
-            atomic_write_json(so, build_snyk_orgs_document(apm_codes_from_rows(rows)))
-
-        if args.snyk_import_output is not None:
-            si = Path(args.snyk_import_output)
-            assert_safe_filesystem_path(si)
-            atomic_write_json(si, build_snyk_import_document(rows))
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2

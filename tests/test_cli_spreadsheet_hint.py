@@ -1,4 +1,4 @@
-"""Regression: Bitbucket mapper should hint when spreadsheet flags are used."""
+"""Regression: Bitbucket discovery should hint when spreadsheet flags are used."""
 
 from __future__ import annotations
 
@@ -11,4 +11,4 @@ def test_bitbucket_mapper_stderr_hints_when_using_spreadsheet_flags(capsys) -> N
     with pytest.raises(SystemExit):
         main(["-i", "foo.xlsx"])
     err = capsys.readouterr().err
-    assert "bitbucket-repo-mapper-from-spreadsheet" in err
+    assert "discover spreadsheet" in err

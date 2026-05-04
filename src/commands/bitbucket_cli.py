@@ -1,4 +1,4 @@
-"""Command-line interface for the Bitbucket org repo mapper."""
+"""Command-line interface: Stage 1 Bitbucket discovery (writes discovery JSON)."""
 
 from __future__ import annotations
 
@@ -8,36 +8,27 @@ import sys
 from pathlib import Path
 from typing import Any, Sequence
 
+from common.discovery_document import build_discovery_document, load_resume_rows
 from common.mapper import iter_mapping
-from common.output_state import (
-    atomic_write_json,
-    build_primary_document,
-    completed_keys_from_rows,
-    load_primary_output_file,
-    row_repo_key,
-)
+from common.output_state import atomic_write_json, completed_keys_from_rows, row_repo_key
 from config import load_dotenv_file, load_settings
 from integrations.bitbucket import BitbucketServerClient
-from snyk.outputs import (
-    apm_codes_from_rows,
-    build_snyk_import_document,
-    build_snyk_orgs_document,
-)
 
 
 def build_parser() -> argparse.ArgumentParser:
     """Construct the CLI argument parser."""
     parser = argparse.ArgumentParser(
         description=(
-            "List all Bitbucket Server repositories and map AppSec YAML to JSON."
+            "Stage 1 (Bitbucket): list projects and repositories, read AppSec YAML per repo, "
+            "and write discovery JSON for later snyk-orgs / snyk-import stages."
         ),
     )
     parser.add_argument(
         "-o",
         "--output",
         help=(
-            "Write primary mapping JSON to this file (resumable wrapper format). "
-            "If omitted, print a JSON array to stdout."
+            "Write discovery JSON (versioned: source, rows, optional checkpoint). "
+            "If omitted, print a JSON array of rows to stdout."
         ),
     )
     parser.add_argument(
@@ -56,28 +47,12 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--snyk-orgs-output",
-        type=Path,
-        default=None,
-        metavar="PATH",
-        help=(
-            "Write Snyk org-creation JSON (one org per distinct APM code) to this path."
-        ),
-    )
-    parser.add_argument(
-        "--snyk-import-output",
-        type=Path,
-        default=None,
-        metavar="PATH",
-        help="Write Snyk Bitbucket Server import targets JSON to this path.",
-    )
-    parser.add_argument(
         "--flush-interval",
         type=int,
         default=None,
         metavar="N",
         help=(
-            "Write outputs every N new repositories (default: BITBUCKET_FLUSH_INTERVAL "
+            "Write discovery every N new repositories (default: BITBUCKET_FLUSH_INTERVAL "
             "or 1). Applies when --output is set."
         ),
     )
@@ -92,25 +67,13 @@ def _last_checkpoint_key(rows: list[dict[str, Any]]) -> tuple[str, str] | None:
     return None
 
 
-def _flush_artifacts(
-    primary_path: Path,
-    rows: list[dict[str, Any]],
-    snyk_orgs: Path | None,
-    snyk_import: Path | None,
-) -> None:
-    """Persist primary and optional Snyk companion files atomically."""
+def _flush_discovery(output_path: Path, rows: list[dict[str, Any]]) -> None:
+    """Persist discovery JSON atomically."""
     ck = _last_checkpoint_key(rows)
-    atomic_write_json(primary_path, build_primary_document(rows, last_completed=ck))
-    if snyk_orgs is not None:
-        atomic_write_json(
-            snyk_orgs,
-            build_snyk_orgs_document(apm_codes_from_rows(rows)),
-        )
-    if snyk_import is not None:
-        atomic_write_json(
-            snyk_import,
-            build_snyk_import_document(rows),
-        )
+    atomic_write_json(
+        output_path,
+        build_discovery_document(rows, "bitbucket", last_completed=ck),
+    )
 
 
 def _run_with_file_output(
@@ -120,12 +83,10 @@ def _run_with_file_output(
     file_path: str,
     max_repos: int | None,
     flush_interval: int,
-    snyk_orgs: Path | None,
-    snyk_import: Path | None,
 ) -> None:
-    """Incremental mapping with resume and periodic flush."""
+    """Incremental discovery with resume and periodic flush."""
     try:
-        existing_rows, _legacy = load_primary_output_file(output_path)
+        existing_rows = load_resume_rows(output_path)
     except ValueError as exc:
         raise RuntimeError(str(exc)) from exc
     completed = completed_keys_from_rows(existing_rows)
@@ -144,10 +105,10 @@ def _run_with_file_output(
                 completed.add(key)
             pending_flush += 1
             if pending_flush >= flush_interval:
-                _flush_artifacts(output_path, rows_accum, snyk_orgs, snyk_import)
+                _flush_discovery(output_path, rows_accum)
                 pending_flush = 0
     finally:
-        _flush_artifacts(output_path, rows_accum, snyk_orgs, snyk_import)
+        _flush_discovery(output_path, rows_accum)
 
 
 def _run_stdout(
@@ -155,10 +116,8 @@ def _run_stdout(
     client: BitbucketServerClient,
     file_path: str,
     max_repos: int | None,
-    snyk_orgs: Path | None,
-    snyk_import: Path | None,
 ) -> None:
-    """Write a JSON array to stdout; optional Snyk files are still written when set."""
+    """Write a JSON array of rows to stdout (no discovery wrapper)."""
     rows = list(
         iter_mapping(
             client,
@@ -169,24 +128,16 @@ def _run_stdout(
     )
     text = json.dumps(rows, indent=2, ensure_ascii=False) + "\n"
     sys.stdout.write(text)
-    if snyk_orgs is not None:
-        atomic_write_json(
-            snyk_orgs,
-            build_snyk_orgs_document(apm_codes_from_rows(rows)),
-        )
-    if snyk_import is not None:
-        atomic_write_json(snyk_import, build_snyk_import_document(rows))
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run the mapper CLI."""
+    """Run Bitbucket discovery CLI."""
     raw = list(argv) if argv is not None else sys.argv[1:]
     if "-i" in raw or "--input" in raw:
         print(
-            "Spreadsheet import uses a different command: "
-            "`uv run bitbucket-repo-mapper-from-spreadsheet -i FILE.xlsx` "
-            "(or pass FILE.xlsx as the only positional argument). "
-            "`bitbucket-repo-mapper` talks to Bitbucket and has no --input.",
+            "Spreadsheet discovery uses: `python main.py discover spreadsheet …` "
+            "(or the `repo-mapper-discover-spreadsheet` console script). "
+            "This command is Bitbucket-only and has no --input.",
             file=sys.stderr,
         )
     parser = build_parser()
@@ -219,16 +170,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 file_path=settings.file_path,
                 max_repos=args.max_repos,
                 flush_interval=flush_interval,
-                snyk_orgs=args.snyk_orgs_output,
-                snyk_import=args.snyk_import_output,
             )
         else:
             _run_stdout(
                 client=client,
                 file_path=settings.file_path,
                 max_repos=args.max_repos,
-                snyk_orgs=args.snyk_orgs_output,
-                snyk_import=args.snyk_import_output,
             )
     except ValueError as exc:
         print(str(exc), file=sys.stderr)

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from common.spreadsheet.mapping import (
     mapping_row_from_abd,
     mapping_rows_from_xlsx,
@@ -58,6 +60,14 @@ def test_empty_b_skipped() -> None:
     assert mapping_row_from_abd("A", "", "D") is None
 
 
+@pytest.mark.skipif(
+    not (
+        Path(__file__).resolve().parents[1]
+        / "data"
+        / "AppSec Repo to APM - Sample.xlsx"
+    ).is_file(),
+    reason="Sample workbook not present in repo checkout",
+)
 def test_sample_xlsx_contains_path_and_skips_pg() -> None:
     sample = (
         Path(__file__).resolve().parents[1] / "data" / "AppSec Repo to APM - Sample.xlsx"

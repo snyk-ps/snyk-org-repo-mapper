@@ -18,8 +18,10 @@ dev = [
 ]
 
 [project.scripts]
-bitbucket-repo-mapper = "commands.bitbucket_cli:main"
-bitbucket-repo-mapper-from-spreadsheet = "commands.spreadsheet_cli:main"
+repo-mapper-discover-bitbucket = "commands.dispatch:main_discover_bitbucket"
+repo-mapper-discover-spreadsheet = "commands.dispatch:main_discover_spreadsheet"
+repo-mapper-snyk-orgs = "commands.dispatch:main_snyk_orgs"
+repo-mapper-snyk-import = "commands.dispatch:main_snyk_import"
 
 [tool.setuptools.packages.find]
 where = ["src"]

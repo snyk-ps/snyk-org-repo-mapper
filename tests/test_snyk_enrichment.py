@@ -9,6 +9,7 @@ from snyk.enrichment import (
     enrich_import_document,
     org_names_from_snyk_orgs_document,
     required_apm_codes_for_import,
+    summarize_enrichment_plan,
     validate_orgs_file_lists_codes,
 )
 
@@ -27,6 +28,67 @@ def test_required_apm_codes() -> None:
         ]
     }
     assert required_apm_codes_for_import({"P1": "APM1"}, doc) == {"APM1"}
+
+
+def test_required_apm_codes_skips_missing_project_when_default_org() -> None:
+    doc = {
+        "targets": [
+            {"target": {"projectKey": "P1", "repoSlug": "a"}},
+            {"target": {"projectKey": "P2", "repoSlug": "b"}},
+        ]
+    }
+    assert required_apm_codes_for_import(
+        {"P1": "APM1"}, doc, default_org_id="org-fallback-uuid"
+    ) == {"APM1"}
+
+
+def test_required_apm_codes_missing_project_raises_without_default() -> None:
+    doc = {"targets": [{"target": {"projectKey": "PX", "repoSlug": "r"}}]}
+    with pytest.raises(ValueError, match="No apm_code"):
+        required_apm_codes_for_import({}, doc)
+
+
+def test_enrich_import_document_uses_default_org_when_no_apm() -> None:
+    import_doc = {
+        "targets": [
+            {
+                "orgId": "******",
+                "integrationId": "******",
+                "target": {"projectKey": "P1", "repoSlug": "r", "name": "r", "branch": ""},
+            }
+        ]
+    }
+    out = enrich_import_document(
+        import_doc,
+        project_apm={},
+        name_to_org_id={},
+        org_to_integration_id={"default-org-uuid": "int-uuid"},
+        default_org_id="default-org-uuid",
+    )
+    t0 = out["targets"][0]
+    assert t0["orgId"] == "default-org-uuid"
+    assert t0["integrationId"] == "int-uuid"
+
+
+def test_summarize_plan_shows_default_org() -> None:
+    import_doc = {
+        "targets": [
+            {
+                "orgId": "******",
+                "target": {"projectKey": "P1", "repoSlug": "r", "name": "r", "branch": ""},
+            }
+        ]
+    }
+    text = summarize_enrichment_plan(
+        import_doc,
+        {},
+        {},
+        {"fallback-id": "int-1"},
+        default_org_id="fallback-id",
+    )
+    assert "no apm_code" in text
+    assert "fallback-id" in text
+    assert "int-1" in text
 
 
 def test_validate_orgs_file_missing() -> None:

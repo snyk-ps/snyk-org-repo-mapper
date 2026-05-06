@@ -34,7 +34,7 @@ def parse_appsec_yaml(content: str) -> ParsedAppSec:
         return ParsedAppSec(apm_code=None, production_branch=None)
     if not isinstance(data, dict):
         return ParsedAppSec(apm_code=None, production_branch=None)
-    app_sec = data.get("appSec")
+    app_sec = data.get("security")
     if not isinstance(app_sec, dict):
         return ParsedAppSec(apm_code=None, production_branch=None)
     apm = _string_or_none(app_sec.get("apmCode"))

@@ -61,6 +61,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional snyk-orgs.json for cross-check of expected org names.",
     )
     parser.add_argument(
+        "--default-org-id",
+        default=None,
+        metavar="UUID",
+        help=(
+            "Snyk organization id (UUID from the Snyk UI or API) used for import targets "
+            "whose Bitbucket project has no apm_code in discovery (all-null APM rows)."
+        ),
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Query Snyk API and print a plan; do not write --output.",
@@ -81,7 +90,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
 
     import_doc = build_snyk_import_document(rows)
-    required = required_apm_codes_for_import(project_apm, import_doc)
+    default_org: str | None = None
+    if isinstance(args.default_org_id, str) and args.default_org_id.strip():
+        default_org = args.default_org_id.strip()
+    required = required_apm_codes_for_import(
+        project_apm, import_doc, default_org_id=default_org
+    )
 
     orgs_doc = None
     if args.snyk_orgs is not None:
@@ -108,19 +122,31 @@ def main(argv: Sequence[str] | None = None) -> int:
             if code not in name_to_id:
                 msg = f"No Snyk organization named {code!r} in group {settings.group_id}"
                 raise ValueError(msg)
+        if default_org is not None:
+            valid_ids = {row["id"] for row in api_orgs}
+            if default_org not in valid_ids:
+                msg = (
+                    f"Default organization id {default_org!r} is not in Snyk group "
+                    f"{settings.group_id!r} (not returned by group org listing)."
+                )
+                raise ValueError(msg)
         org_ids = {name_to_id[c] for c in required}
+        if default_org is not None:
+            org_ids.add(default_org)
         org_to_integration = integration_cache_for_orgs(client, org_ids)
         new_doc = enrich_import_document(
             import_doc,
             project_apm=project_apm,
             name_to_org_id=name_to_id,
             org_to_integration_id=org_to_integration,
+            default_org_id=default_org,
         )
         plan = summarize_enrichment_plan(
             import_doc,
             project_apm,
             name_to_id,
             org_to_integration,
+            default_org_id=default_org,
         )
     except (ValueError, RuntimeError) as exc:
         print(str(exc), file=sys.stderr)

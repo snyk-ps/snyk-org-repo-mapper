@@ -219,7 +219,7 @@ After enrichment, targets include resolved `orgId` and `integrationId` where the
 The tool expects YAML like:
 
 ```yaml
-appSec:
+security:
   apmCode: ABC1
   productionBranch: main
 ```

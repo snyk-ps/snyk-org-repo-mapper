@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
+from http.client import RemoteDisconnected
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urljoin
@@ -52,6 +53,8 @@ def default_branch_tuple(repo: dict[str, Any]) -> tuple[str, str]:
 
 
 def _is_retriable_request_failure(exc: BaseException) -> bool:
+    if isinstance(exc, RemoteDisconnected):
+        return True
     if isinstance(exc, TimeoutError):
         return True
     if isinstance(exc, URLError):
@@ -100,7 +103,7 @@ class BitbucketServerClient:
                     msg = f"HTTP {exc.code} requesting Bitbucket API"
                     raise RuntimeError(msg) from exc
                 raise
-            except (URLError, TimeoutError):
+            except (URLError, TimeoutError, RemoteDisconnected):
                 raise
             try:
                 parsed = json.loads(body.decode("utf-8"))
@@ -122,7 +125,7 @@ class BitbucketServerClient:
         except HTTPError as exc:
             msg = f"HTTP {exc.code} requesting Bitbucket API"
             raise RuntimeError(msg) from exc
-        except (URLError, TimeoutError) as exc:
+        except (URLError, TimeoutError, RemoteDisconnected) as exc:
             msg = "Network error calling Bitbucket API"
             raise RuntimeError(msg) from exc
 
@@ -190,7 +193,7 @@ class BitbucketServerClient:
                     msg = f"HTTP {exc.code} fetching repository file"
                     raise RuntimeError(msg) from exc
                 raise
-            except (URLError, TimeoutError):
+            except (URLError, TimeoutError, RemoteDisconnected):
                 raise
 
         try:
@@ -205,6 +208,6 @@ class BitbucketServerClient:
                 return None
             msg = f"HTTP {exc.code} fetching repository file"
             raise RuntimeError(msg) from exc
-        except (URLError, TimeoutError) as exc:
+        except (URLError, TimeoutError, RemoteDisconnected) as exc:
             msg = "Network error fetching repository file"
             raise RuntimeError(msg) from exc

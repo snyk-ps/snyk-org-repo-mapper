@@ -30,8 +30,14 @@ def org_names_from_snyk_orgs_document(doc: dict[str, Any]) -> set[str]:
 def required_apm_codes_for_import(
     project_apm: dict[str, str],
     import_doc: dict[str, Any],
+    *,
+    default_org_id: str | None = None,
 ) -> set[str]:
-    """Collect ``apm_code`` values needed for all import targets."""
+    """Collect ``apm_code`` values needed for all import targets.
+
+    Targets whose ``projectKey`` is missing from ``project_apm`` are skipped when
+    ``default_org_id`` is a non-empty string (those targets use the default org).
+    """
     targets = import_doc.get("targets")
     if not isinstance(targets, list):
         msg = "snyk-import document must contain a 'targets' array"
@@ -51,9 +57,12 @@ def required_apm_codes_for_import(
         pk = pk.strip()
         code = project_apm.get(pk)
         if code is None:
+            if default_org_id is not None and default_org_id.strip():
+                continue
             msg = (
                 f"No apm_code for Bitbucket project {pk!r} in project context "
-                f"(targets[{i}]). Add mapping rows or extend project context."
+                f"(targets[{i}]). Add mapping rows, extend project context, or pass "
+                f"--default-org-id for projects without YAML APM."
             )
             raise ValueError(msg)
         needed.add(code)
@@ -94,6 +103,7 @@ def enrich_import_document(
     project_apm: dict[str, str],
     name_to_org_id: dict[str, str],
     org_to_integration_id: dict[str, str],
+    default_org_id: str | None = None,
 ) -> dict[str, Any]:
     """Return a new import document with ``orgId`` and ``integrationId`` set."""
     targets = import_doc.get("targets")
@@ -116,6 +126,16 @@ def enrich_import_document(
             continue
         code = project_apm.get(pk.strip())
         if code is None:
+            if default_org_id is None or not default_org_id.strip():
+                new_targets.append(clone)
+                continue
+            org_id = default_org_id.strip()
+            integ_id = org_to_integration_id.get(org_id)
+            if integ_id is None:
+                msg = f"No cached integration id for org {org_id!r}"
+                raise RuntimeError(msg)
+            clone["orgId"] = org_id
+            clone["integrationId"] = integ_id
             new_targets.append(clone)
             continue
         org_id = name_to_org_id.get(code)
@@ -160,6 +180,8 @@ def summarize_enrichment_plan(
     project_apm: dict[str, str],
     name_to_org_id: dict[str, str],
     org_to_integration_id: dict[str, str],
+    *,
+    default_org_id: str | None = None,
 ) -> str:
     """Human-readable dry-run summary."""
     lines: list[str] = []
@@ -177,7 +199,17 @@ def summarize_enrichment_plan(
             continue
         code = project_apm.get(pk.strip())
         if code is None:
-            lines.append(f"targets[{i}] project={pk!r}: NO apm_code in context")
+            if default_org_id is not None and default_org_id.strip():
+                oid = default_org_id.strip()
+                iid = org_to_integration_id.get(oid, "?")
+                cur_o = item.get("orgId")
+                cur_i = item.get("integrationId")
+                lines.append(
+                    f"targets[{i}] project={pk!r}: no apm_code; default orgId={oid!r} "
+                    f"integrationId={iid!r} (current orgId={cur_o!r} integrationId={cur_i!r})"
+                )
+            else:
+                lines.append(f"targets[{i}] project={pk!r}: NO apm_code in context")
             continue
         oid = name_to_org_id.get(code, "?")
         iid = "?"

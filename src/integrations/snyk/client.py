@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from http.client import RemoteDisconnected
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlparse
@@ -13,6 +14,8 @@ from integrations.http_retry import run_with_retries
 
 
 def _is_retriable_request_failure(exc: BaseException) -> bool:
+    if isinstance(exc, RemoteDisconnected):
+        return True
     if isinstance(exc, TimeoutError):
         return True
     if isinstance(exc, URLError):

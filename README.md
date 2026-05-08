@@ -121,8 +121,10 @@ No `BITBUCKET_*` variables.
 |----------|----------|-------------|
 | `SNYK_TOKEN` | Yes | Snyk API token (`Authorization: token …`). |
 | `SNYK_GROUP_ID` | Yes | UUID of the Snyk **Group** used to list orgs for name matching. |
-| `SNYK_API_BASE` | No | REST base including `/rest`, e.g. `https://api.snyk.io/rest`. Default `https://api.snyk.io/rest`. |
-| `SNYK_API_VERSION` | No | API version query (date string). Default `2024-10-15`. |
+| `SNYK_API` | No | Snyk API **origin** only (scheme + host), e.g. `https://api.snyk.io`. The tool appends `/rest` for REST calls and `/v1` for v1 integrations. Default `https://api.snyk.io`. |
+| `SNYK_API_BASE` | No | **Deprecated.** Used only if `SNYK_API` is unset; a trailing `/rest` is stripped to derive the origin (migration from the old “REST base URL” style). |
+| `SNYK_INTEGRATIONS_API` | No | Which API lists org integrations: `v1` (default) or `rest`. Use `rest` when the REST integrations endpoint is available for your tenant. |
+| `SNYK_API_VERSION` | No | REST API version query parameter for group org listing (date string). Default `2024-10-15`. |
 | `SNYK_HTTP_MAX_ATTEMPTS` | No | HTTP retry attempts. Default `5`. |
 | `SNYK_HTTP_BACKOFF_S` | No | Base backoff between retries. Default `1.0`. |
 

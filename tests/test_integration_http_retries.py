@@ -85,7 +85,10 @@ def test_snyk_request_json_retries_remote_disconnected() -> None:
     settings = SnykSettings(
         token="t",
         group_id="g",
-        rest_api_base="https://api.snyk.io/rest",
+        api_origin="https://api.snyk.io",
+        rest_root="https://api.snyk.io/rest",
+        v1_root="https://api.snyk.io/v1",
+        integrations_api="v1",
         api_version="2024-01-01",
         http_max_attempts=3,
         http_backoff_seconds=0.0,
@@ -114,6 +117,8 @@ def test_snyk_request_json_retries_remote_disconnected() -> None:
 
     with patch("integrations.snyk.client.urlopen", side_effect=fake_urlopen):
         client = SnykRestClient(settings)
-        out = client._request_json("https://api.snyk.io/rest/orgs/x?version=2024-01-01")
+        out = client._request_rest_json_object(
+            "https://api.snyk.io/rest/orgs/x?version=2024-01-01"
+        )
     assert out == {"data": []}
     assert n == 2

@@ -1,22 +1,28 @@
-"""Snyk REST API settings for import enrichment (stage 2)."""
+"""Snyk API settings for import enrichment (Stage 3)."""
 
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from typing import Literal
 
 
-DEFAULT_SNYK_REST_BASE = "https://api.snyk.io/rest"
+DEFAULT_SNYK_API_ORIGIN = "https://api.snyk.io"
 DEFAULT_SNYK_API_VERSION = "2024-10-15"
+
+IntegrationsApi = Literal["v1", "rest"]
 
 
 @dataclass(frozen=True)
 class SnykSettings:
-    """Runtime settings for Snyk REST calls."""
+    """Runtime settings for Snyk HTTP calls (REST group orgs; v1 or REST integrations)."""
 
     token: str
     group_id: str
-    rest_api_base: str
+    api_origin: str
+    rest_root: str
+    v1_root: str
+    integrations_api: IntegrationsApi
     api_version: str
     http_max_attempts: int
     http_backoff_seconds: float
@@ -50,13 +56,45 @@ def _parse_float(name: str, raw: str | None, default: float, *, minimum: float =
     return value
 
 
+def _parse_integrations_api(raw: str | None) -> IntegrationsApi:
+    if raw is None or not raw.strip():
+        return "v1"
+    value = raw.strip().lower()
+    if value == "v1":
+        return "v1"
+    if value == "rest":
+        return "rest"
+    msg = "SNYK_INTEGRATIONS_API must be 'v1' or 'rest'"
+    raise ValueError(msg)
+
+
+def _derive_api_origin() -> str:
+    """Resolve API origin (no /rest or /v1 suffix)."""
+    explicit = os.environ.get("SNYK_API", "").strip()
+    if explicit:
+        origin = explicit.rstrip("/")
+        while origin.endswith("/rest"):
+            origin = origin[: -len("/rest")].rstrip("/")
+        while origin.endswith("/v1"):
+            origin = origin[: -len("/v1")].rstrip("/")
+        return origin
+    legacy = os.environ.get("SNYK_API_BASE", "").strip()
+    if legacy:
+        leg = legacy.rstrip("/")
+        if leg.endswith("/rest"):
+            leg = leg[: -len("/rest")]
+        return leg.rstrip("/")
+    return DEFAULT_SNYK_API_ORIGIN.rstrip("/")
+
+
 def load_snyk_settings() -> SnykSettings:
     """Load settings from the environment (after optional ``load_dotenv_file``)."""
     token = os.environ.get("SNYK_TOKEN", "").strip()
     group_id = os.environ.get("SNYK_GROUP_ID", "").strip()
-    rest_base = os.environ.get("SNYK_API_BASE", "").strip().rstrip("/")
-    if not rest_base:
-        rest_base = DEFAULT_SNYK_REST_BASE.rstrip("/")
+    api_origin = _derive_api_origin()
+    rest_root = f"{api_origin}/rest"
+    v1_root = f"{api_origin}/v1"
+    integrations_api = _parse_integrations_api(os.environ.get("SNYK_INTEGRATIONS_API"))
     api_version = os.environ.get("SNYK_API_VERSION", "").strip()
     if not api_version:
         api_version = DEFAULT_SNYK_API_VERSION
@@ -81,7 +119,10 @@ def load_snyk_settings() -> SnykSettings:
     return SnykSettings(
         token=token,
         group_id=group_id,
-        rest_api_base=rest_base,
+        api_origin=api_origin,
+        rest_root=rest_root,
+        v1_root=v1_root,
+        integrations_api=integrations_api,
         api_version=api_version,
         http_max_attempts=attempts,
         http_backoff_seconds=backoff,

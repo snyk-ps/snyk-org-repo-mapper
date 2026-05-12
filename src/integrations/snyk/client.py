@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import re
 from http.client import RemoteDisconnected
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -12,6 +14,8 @@ from urllib.request import Request, urlopen
 from config.snyk_settings import SnykSettings
 from integrations.http_retry import run_with_retries
 
+logging.basicConfig(level=logging.DEBUG)
+_LOG = logging.getLogger(__name__)
 
 def _is_retriable_request_failure(exc: BaseException) -> bool:
     if isinstance(exc, RemoteDisconnected):
@@ -42,8 +46,40 @@ def _resolve_next_url(rest_root: str, next_link: str | None) -> str | None:
     return urljoin(origin + "/", link.lstrip("/"))
 
 
+_V1_INTEGRATION_UUID = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+_V1_INTEGRATIONS_MAP_BLOCKLIST = frozenset(
+    {"integrations", "data", "results", "message", "code", "error", "errors", "status", "detail"}
+)
+
+
+def _v1_type_id_map_to_integration_list(parsed: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """If ``parsed`` is integration-type → UUID string, return list of ``{id, type}`` dicts."""
+    if not parsed:
+        return None
+    if set(parsed) & _V1_INTEGRATIONS_MAP_BLOCKLIST:
+        return None
+    out: list[dict[str, Any]] = []
+    for slug, raw_id in parsed.items():
+        if not isinstance(slug, str) or not slug.strip():
+            return None
+        if not isinstance(raw_id, str) or not raw_id.strip():
+            return None
+        iid = raw_id.strip()
+        if not _V1_INTEGRATION_UUID.match(iid):
+            return None
+        out.append({"id": iid, "type": slug})
+    return out
+
+
 def normalize_v1_integrations_payload(parsed: Any) -> list[dict[str, Any]]:
-    """Turn v1 GET /org/.../integrations JSON into a list of integration objects."""
+    """Turn v1 GET /org/.../integrations JSON into a list of integration objects.
+
+    Accepts a top-level array, ``{"integrations"|"data"|"results": [...]}``, or a
+    flat map ``{ "<integration-slug>": "<uuid>", ... }`` (slug may contain hyphens,
+    e.g. ``github-cloud-app``).
+    """
     if isinstance(parsed, list):
         return [x for x in parsed if isinstance(x, dict)]
     if isinstance(parsed, dict):
@@ -51,8 +87,21 @@ def normalize_v1_integrations_payload(parsed: Any) -> list[dict[str, Any]]:
             raw = parsed.get(key)
             if isinstance(raw, list):
                 return [x for x in raw if isinstance(x, dict)]
+        from_map = _v1_type_id_map_to_integration_list(parsed)
+        if from_map is not None:
+            return from_map
     msg = "Unexpected v1 integrations response shape"
     raise RuntimeError(msg)
+
+
+def _v1_integrations_response_debug_summary(parsed: Any) -> str:
+    """Short description of raw JSON for debug logs (no token or full bodies)."""
+    if isinstance(parsed, list):
+        return f"list(len={len(parsed)})"
+    if isinstance(parsed, dict):
+        keys = sorted(parsed.keys())
+        return f"dict(keys={keys!r})"
+    return type(parsed).__name__
 
 
 class SnykRestClient:
@@ -182,8 +231,20 @@ class SnykRestClient:
     def _iter_org_integrations_v1(self, org_id: str) -> list[dict[str, Any]]:
         oid = org_id.strip()
         url = f"{self._settings.v1_root}/org/{oid}/integrations"
+        _LOG.debug("Snyk v1 integrations GET %s", url)
         parsed = self._request_json_value(url, accept="application/json")
-        return normalize_v1_integrations_payload(parsed)
+        _LOG.debug(
+            "Snyk v1 integrations org_id=%s raw=%s",
+            oid,
+            _v1_integrations_response_debug_summary(parsed),
+        )
+        items = normalize_v1_integrations_payload(parsed)
+        _LOG.debug(
+            "Snyk v1 integrations org_id=%s normalized_item_count=%d",
+            oid,
+            len(items),
+        )
+        return items
 
     def _iter_org_integrations_rest(self, org_id: str) -> list[dict[str, Any]]:
         s = self._settings

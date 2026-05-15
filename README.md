@@ -114,7 +114,7 @@ Reads `broker-org-plan.json` and **POST**s org–connection integrations for eac
 
 ### Stage 3 — `snyk-import`
 
-Reads `--discovery`, builds import targets, then calls the **Snyk REST API** to resolve `orgId` and `integrationId`. Optional `--snyk-orgs` cross-checks that org names cover the APM codes needed by the import. **No Bitbucket HTTP** in this stage.
+Reads `--discovery`, builds import targets, then calls the **Snyk REST API** to resolve `orgId` and `integrationId`. Optional `--snyk-orgs` cross-checks that org names cover the APM codes needed by the import. Optional **`--default-org-id`** routes targets from Bitbucket projects with no `apm_code` into one org; their `target.name` is **`{projectKey}/{repository_name}`** (repository slug when display name is absent) so repos with the same name in different projects stay unique. **No Bitbucket HTTP** in this stage.
 
 ## Configuration by stage
 
@@ -171,6 +171,10 @@ Apply reads `tenant_id` and `install_id` from the plan file; orgs must exist in 
 | `SNYK_HTTP_MAX_ATTEMPTS` | No | HTTP retry attempts. Default `5`. |
 | `SNYK_HTTP_BACKOFF_S` | No | Base backoff between retries. Default `1.0`. |
 
+| Flag | Description |
+|------|-------------|
+| `--default-org-id UUID` | Snyk org id for import targets whose Bitbucket project has no `apm_code`. Sets composite `target.name` = `{projectKey}/{repository_name}`. |
+
 ### Optional `.env`
 
 If you omit `--env-file`, the CLI loads `.env` from the **current working directory** when present (`KEY=value`; `#` comments and blank lines ignored). Stage 3 accepts `--env-file` for Snyk settings.
@@ -182,7 +186,7 @@ If you omit `--env-file`, the CLI loads `.env` from the **current working direct
 | `discover bitbucket` | Bitbucket → discovery or stdout rows | `-o`, `--env-file`, `--max-repos`, `--flush-interval` |
 | `discover spreadsheet` | `.xlsx` → discovery or stdout rows | `-i` / `--input`, `-o` |
 | `snyk-orgs` | discovery → `snyk-orgs.json` | `--discovery`, `--output`, `--group-id`, `--template-org-id`, `--dry-run` |
-| `snyk-import` | discovery → `snyk-import.json` + Snyk IDs | `--discovery`, `--output`, `--snyk-orgs` (optional), `--env-file`, `--dry-run` |
+| `snyk-import` | discovery → `snyk-import.json` + Snyk IDs | `--discovery`, `--output`, `--snyk-orgs` (optional), `--default-org-id` (optional), `--env-file`, `--dry-run` |
 
 ```bash
 PYTHONPATH=src python src/main.py -h

@@ -120,6 +120,7 @@ def test_snyk_import_default_org_for_null_apm_project(tmp_path: Path, monkeypatc
     data = json.loads(out_imp.read_text(encoding="utf-8"))
     assert data["targets"][0]["orgId"] == "default-org-id"
     assert data["targets"][0]["integrationId"] == "int-default"
+    assert data["targets"][0]["target"]["name"] == "NOPM/r1"
 
 
 def test_snyk_import_rejects_default_org_not_in_group(tmp_path: Path, monkeypatch) -> None:

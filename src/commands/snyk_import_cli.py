@@ -89,10 +89,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(str(exc), file=sys.stderr)
         return 2
 
-    import_doc = build_snyk_import_document(rows)
     default_org: str | None = None
     if isinstance(args.default_org_id, str) and args.default_org_id.strip():
         default_org = args.default_org_id.strip()
+    import_doc = build_snyk_import_document(
+        rows,
+        project_apm=project_apm,
+        default_org_id=default_org,
+    )
     required = required_apm_codes_for_import(
         project_apm, import_doc, default_org_id=default_org
     )

@@ -43,16 +43,43 @@ def build_snyk_orgs_document(
     return {"orgs": orgs}
 
 
-def build_snyk_import_document(rows: list[dict[str, Any]]) -> dict[str, Any]:
+def default_org_target_name(
+    project_key: str,
+    repository_name: str | None,
+    repo_slug: str,
+) -> str:
+    """Build ``target.name`` for default-org imports: ``{projectKey}/{repo part}``."""
+    if isinstance(repository_name, str) and repository_name.strip():
+        repo_part = repository_name.strip()
+    else:
+        repo_part = repo_slug
+    return f"{project_key}/{repo_part}"
+
+
+def build_snyk_import_document(
+    rows: list[dict[str, Any]],
+    *,
+    project_apm: dict[str, str] | None = None,
+    default_org_id: str | None = None,
+) -> dict[str, Any]:
     """Build the Bitbucket Server import targets document from mapping rows.
 
     Args:
         rows: Mapping rows including ``repository_path``, ``repository_name``,
             ``production_branch``.
+        project_apm: Optional ``projectKey → apm_code`` map from discovery.
+        default_org_id: When set, targets whose project has no APM entry use
+            composite ``target.name`` via :func:`default_org_target_name`.
 
     Returns:
         JSON object with a ``targets`` array.
     """
+    apm_map = project_apm if project_apm is not None else {}
+    use_default_naming = (
+        default_org_id is not None
+        and isinstance(default_org_id, str)
+        and bool(default_org_id.strip())
+    )
     targets: list[dict[str, Any]] = []
     for row in rows:
         path = row.get("repository_path")
@@ -63,7 +90,10 @@ def build_snyk_import_document(rows: list[dict[str, Any]]) -> dict[str, Any]:
             continue
         name = row.get("repository_name")
         branch = row.get("production_branch")
-        repo_name = name if isinstance(name, str) else repo_slug
+        if use_default_naming and project_key not in apm_map:
+            repo_name = default_org_target_name(project_key, name, repo_slug)
+        else:
+            repo_name = name if isinstance(name, str) else repo_slug
         branch_name = branch if isinstance(branch, str) else ""
         targets.append(
             {

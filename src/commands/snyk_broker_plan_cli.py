@@ -1,4 +1,4 @@
-"""CLI Stage 2.5: build broker-org-plan.json from snyk-orgs and Universal Broker."""
+"""CLI Stage 2.1 — Broker Plan: build broker-org-plan.json from snyk-orgs and Universal Broker."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from snyk.enrichment import load_json_object
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Stage 2.5: build broker-org-plan.json from snyk-orgs.json and "
+            "Stage 2.1 — Broker Plan: build broker-org-plan.json from snyk-orgs.json and "
             "Universal Broker bitbucket-server connections (read-only API)."
         ),
     )
@@ -35,7 +35,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         required=True,
         metavar="PATH",
-        help="snyk-orgs.json from Stage 2.",
+        help="snyk-orgs.json from Stage 2 (snyk-orgs).",
     )
     parser.add_argument(
         "--output",

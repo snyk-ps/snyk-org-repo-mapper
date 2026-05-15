@@ -1,4 +1,4 @@
-"""Unified CLI dispatcher: discover → snyk-orgs → snyk-import."""
+"""Unified CLI dispatcher: discover → snyk-orgs → broker plan/apply → snyk-import."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from commands.spreadsheet_cli import main as spreadsheet_main
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Dispatch to Stage 1–3 CLIs."""
+    """Dispatch to pipeline stage CLIs (1, 2, 2.1, 2.2, 3)."""
     args = list(sys.argv[1:] if argv is None else argv)
     if not args or args[0] in ("-h", "--help"):
         print(
@@ -23,8 +23,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             "  discover bitbucket       Stage 1 — Bitbucket Server → discovery.json\n"
             "  discover spreadsheet     Stage 1 — .xlsx → discovery.json\n"
             "  snyk-orgs                Stage 2 — discovery.json → snyk-orgs.json\n"
-            "  snyk-broker-plan         Stage 2.5 — snyk-orgs.json → broker-org-plan.json\n"
-            "  snyk-broker-apply        Stage 2.6 — broker-org-plan.json → integrations (POST)\n"
+            "  snyk-broker-plan         Stage 2.1 — Broker Plan → broker-org-plan.json\n"
+            "  snyk-broker-apply        Stage 2.2 — Broker Apply → broker integrations (POST)\n"
             "  snyk-import              Stage 3 — discovery.json → snyk-import.json (Snyk API)\n",
             file=sys.stderr,
         )

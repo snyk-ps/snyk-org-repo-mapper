@@ -1,4 +1,4 @@
-"""Build broker-org-plan.json from snyk-orgs and Universal Broker connections."""
+"""Stage 2.1 — Broker Plan: build broker-org-plan.json from snyk-orgs and Universal Broker."""
 
 from __future__ import annotations
 

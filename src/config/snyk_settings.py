@@ -131,7 +131,7 @@ def load_snyk_settings() -> SnykSettings:
 
 @dataclass(frozen=True)
 class BrokerSettings:
-    """Runtime settings for Universal Broker plan/apply (REST under ``/rest``)."""
+    """Runtime settings for Stage 2.1 — Broker Plan and Stage 2.2 — Broker Apply."""
 
     token: str
     api_origin: str

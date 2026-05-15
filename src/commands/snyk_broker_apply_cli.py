@@ -1,4 +1,4 @@
-"""CLI Stage 2.6: apply broker-org-plan.json via Universal Broker integration POST."""
+"""CLI Stage 2.2 — Broker Apply: apply broker-org-plan.json via Universal Broker integration POST."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from snyk.broker_apply import load_and_apply_plan_file
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Stage 2.6: create org–broker connection integrations from "
+            "Stage 2.2 — Broker Apply: create org–broker connection integrations from "
             "broker-org-plan.json assignments."
         ),
     )
@@ -34,7 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         required=True,
         metavar="PATH",
-        help="broker-org-plan.json from Stage 2.5.",
+        help="broker-org-plan.json from Stage 2.1 — Broker Plan.",
     )
     parser.add_argument(
         "--output",

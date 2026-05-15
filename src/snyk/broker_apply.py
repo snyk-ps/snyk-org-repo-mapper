@@ -1,4 +1,4 @@
-"""Apply broker-org-plan.json by POSTing org–connection integrations."""
+"""Stage 2.2 — Broker Apply: apply broker-org-plan.json by POSTing org–connection integrations."""
 
 from __future__ import annotations
 

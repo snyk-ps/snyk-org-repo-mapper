@@ -127,3 +127,68 @@ def load_snyk_settings() -> SnykSettings:
         http_max_attempts=attempts,
         http_backoff_seconds=backoff,
     )
+
+
+@dataclass(frozen=True)
+class BrokerSettings:
+    """Runtime settings for Universal Broker plan/apply (REST under ``/rest``)."""
+
+    token: str
+    api_origin: str
+    rest_root: str
+    api_version: str
+    tenant_id: str
+    install_id: str
+    group_id: str | None
+    http_max_attempts: int
+    http_backoff_seconds: float
+
+
+def load_broker_settings(
+    *,
+    tenant_id: str | None = None,
+    install_id: str | None = None,
+) -> BrokerSettings:
+    """Load Broker settings from env and optional CLI overrides."""
+    token = os.environ.get("SNYK_TOKEN", "").strip()
+    api_origin = _derive_api_origin()
+    rest_root = f"{api_origin}/rest"
+    api_version = os.environ.get("SNYK_API_VERSION", "").strip()
+    if not api_version:
+        api_version = DEFAULT_SNYK_API_VERSION
+    tid = (tenant_id or os.environ.get("SNYK_TENANT_ID", "")).strip()
+    iid = (install_id or os.environ.get("SNYK_BROKER_INSTALL_ID", "")).strip()
+    group_raw = os.environ.get("SNYK_GROUP_ID", "").strip()
+    group_id = group_raw if group_raw else None
+    attempts = _parse_int(
+        "SNYK_HTTP_MAX_ATTEMPTS",
+        os.environ.get("SNYK_HTTP_MAX_ATTEMPTS"),
+        default=5,
+        minimum=1,
+    )
+    backoff = _parse_float(
+        "SNYK_HTTP_BACKOFF_S",
+        os.environ.get("SNYK_HTTP_BACKOFF_S"),
+        default=1.0,
+        minimum=0.0,
+    )
+    if not token:
+        msg = "SNYK_TOKEN is required"
+        raise ValueError(msg)
+    if not tid:
+        msg = "tenant_id is required (SNYK_TENANT_ID or --tenant-id)"
+        raise ValueError(msg)
+    if not iid:
+        msg = "install_id is required (SNYK_BROKER_INSTALL_ID or --install-id)"
+        raise ValueError(msg)
+    return BrokerSettings(
+        token=token,
+        api_origin=api_origin,
+        rest_root=rest_root,
+        api_version=api_version,
+        tenant_id=tid,
+        install_id=iid,
+        group_id=group_id,
+        http_max_attempts=attempts,
+        http_backoff_seconds=backoff,
+    )

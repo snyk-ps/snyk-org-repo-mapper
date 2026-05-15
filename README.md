@@ -1,6 +1,6 @@
 # bitbucket-org-repo-mapper
 
-This project helps you onboard Bitbucket Server repositories into Snyk in **three stages**: produce a single **discovery** JSON from Bitbucket or from a spreadsheet, derive **`snyk-orgs.json`** for org creation, then build **`snyk-import.json`** and resolve Snyk `orgId` / `integrationId` via the Snyk REST API. Stage 3 never calls Bitbucket.
+This project helps you onboard Bitbucket Server repositories into Snyk in **stages**: produce a single **discovery** JSON from Bitbucket or from a spreadsheet, derive **`snyk-orgs.json`** for org creation, optionally plan and apply **Universal Broker** org–connection assignments, then build **`snyk-import.json`** and resolve Snyk `orgId` / `integrationId` via the Snyk REST API. Stage 3 never calls Bitbucket.
 
 ## Quick start
 
@@ -43,9 +43,26 @@ This project helps you onboard Bitbucket Server repositories into Snyk in **thre
      --snyk-orgs snyk-orgs.json
    ```
 
-   Create orgs and integrations in Snyk (matching names in `snyk-orgs.json`) before Stage 3 if they do not exist yet.
+   Create orgs in Snyk (matching names in `snyk-orgs.json`) before broker apply and Stage 3 if they do not exist yet.
 
-After `pip install -e .`, the same flows are available as `repo-mapper-discover-bitbucket`, `repo-mapper-discover-spreadsheet`, `repo-mapper-snyk-orgs`, and `repo-mapper-snyk-import` on your `PATH` (each is a thin wrapper around `main.py` with the first arguments filled in).
+4. **Stages 2.5–2.6 — Universal Broker** (optional; requires existing Broker deployments and `bitbucket-server` connections):
+
+   ```bash
+   export SNYK_TENANT_ID='your-tenant-uuid'
+   export SNYK_BROKER_INSTALL_ID='your-broker-install-uuid'
+
+   PYTHONPATH=src python src/main.py snyk-broker-plan \
+     --snyk-orgs snyk-orgs.json \
+     --output broker-org-plan.json
+
+   PYTHONPATH=src python src/main.py snyk-broker-apply \
+     --plan broker-org-plan.json \
+     --output broker-org-apply-report.json
+   ```
+
+   Set `SNYK_GROUP_ID` so org names from `snyk-orgs.json` resolve to org UUIDs for pre-check and apply.
+
+After `pip install -e .`, the same flows are available as `repo-mapper-discover-bitbucket`, `repo-mapper-discover-spreadsheet`, `repo-mapper-snyk-orgs`, `repo-mapper-snyk-broker-plan`, `repo-mapper-snyk-broker-apply`, and `repo-mapper-snyk-import` on your `PATH`.
 
 ## Requirements
 
@@ -81,6 +98,14 @@ Discovery is the handoff artifact for Stages 2 and 3. Shape: `version`, `source`
 
 Reads `--discovery`, writes **`snyk-orgs.json`** in the shape expected for Snyk org creation / import tooling (one org per distinct non-null `apm_code`). No Snyk or Bitbucket HTTP calls. Optional **`--group-id`** and **`--template-org-id`** set `groupId` and `sourceOrgId` on every row instead of placeholders (each flag is independent). See [Snyk REST — Organizations](https://docs.snyk.io/snyk-api/rest-api/endpoints/organizations) for how you apply this payload in your process.
 
+### Stage 2.5 — `snyk-broker-plan`
+
+Reads `snyk-orgs.json`, lists Universal Broker **deployments** and **connections** for `SNYK_TENANT_ID` + `SNYK_BROKER_INSTALL_ID`, keeps `bitbucket-server` connections only, pre-checks orgs already integrated per connection, and writes **`broker-org-plan.json`** with round-robin **assignments**. **GET only** (no Broker mutations).
+
+### Stage 2.6 — `snyk-broker-apply`
+
+Reads `broker-org-plan.json` and **POST**s org–connection integrations for each `assignments` entry (skips `already_integrated`). Writes **`broker-org-apply-report.json`**. Does **not** create deployments or connections. Orgs must already exist in Snyk; use `SNYK_GROUP_ID` when `org_id` is missing from the plan.
+
 ### Stage 3 — `snyk-import`
 
 Reads `--discovery`, builds import targets, then calls the **Snyk REST API** to resolve `orgId` and `integrationId`. Optional `--snyk-orgs` cross-checks that org names cover the APM codes needed by the import. **No Bitbucket HTTP** in this stage.
@@ -114,6 +139,18 @@ No `BITBUCKET_*` variables.
 | `--template-org-id UUID` | Template/source organization ID written as `sourceOrgId` on each org entry (default: placeholder). |
 
 `--dry-run` prints JSON to stdout instead of writing `--output`.
+
+### Stages 2.5–2.6 (Universal Broker)
+
+| Variable / flag | Required | Description |
+|-----------------|----------|-------------|
+| `SNYK_TOKEN` | Yes | Snyk API token. |
+| `SNYK_TENANT_ID` / `--tenant-id` | Yes | Tenant UUID for Broker API paths. |
+| `SNYK_BROKER_INSTALL_ID` / `--install-id` | Yes | Broker app install UUID (plan only). |
+| `SNYK_GROUP_ID` | Recommended | Resolve org **names** to org **UUIDs** for pre-check and apply. |
+| `SNYK_API`, `SNYK_API_VERSION` | No | Same as Stage 3 (REST base and version query param). |
+
+Apply reads `tenant_id` and `install_id` from the plan file; orgs must exist in Snyk before `snyk-broker-apply`.
 
 ### Stage 3
 

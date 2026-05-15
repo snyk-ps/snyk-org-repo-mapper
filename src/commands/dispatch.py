@@ -6,6 +6,8 @@ import sys
 from typing import Sequence
 
 from commands.bitbucket_cli import main as bitbucket_main
+from commands.snyk_broker_apply_cli import main as snyk_broker_apply_main
+from commands.snyk_broker_plan_cli import main as snyk_broker_plan_main
 from commands.snyk_import_cli import main as snyk_import_main
 from commands.snyk_orgs_cli import main as snyk_orgs_main
 from commands.spreadsheet_cli import main as spreadsheet_main
@@ -21,6 +23,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             "  discover bitbucket       Stage 1 — Bitbucket Server → discovery.json\n"
             "  discover spreadsheet     Stage 1 — .xlsx → discovery.json\n"
             "  snyk-orgs                Stage 2 — discovery.json → snyk-orgs.json\n"
+            "  snyk-broker-plan         Stage 2.5 — snyk-orgs.json → broker-org-plan.json\n"
+            "  snyk-broker-apply        Stage 2.6 — broker-org-plan.json → integrations (POST)\n"
             "  snyk-import              Stage 3 — discovery.json → snyk-import.json (Snyk API)\n",
             file=sys.stderr,
         )
@@ -47,6 +51,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     if cmd == "snyk-orgs":
         return snyk_orgs_main(rest)
 
+    if cmd == "snyk-broker-plan":
+        return snyk_broker_plan_main(rest)
+
+    if cmd == "snyk-broker-apply":
+        return snyk_broker_apply_main(rest)
+
     if cmd == "snyk-import":
         return snyk_import_main(rest)
 
@@ -72,3 +82,13 @@ def main_snyk_orgs() -> int:
 def main_snyk_import() -> int:
     """Console script: ``repo-mapper-snyk-import``."""
     return main(["snyk-import"] + sys.argv[1:])
+
+
+def main_snyk_broker_plan() -> int:
+    """Console script: ``repo-mapper-snyk-broker-plan``."""
+    return main(["snyk-broker-plan"] + sys.argv[1:])
+
+
+def main_snyk_broker_apply() -> int:
+    """Console script: ``repo-mapper-snyk-broker-apply``."""
+    return main(["snyk-broker-apply"] + sys.argv[1:])

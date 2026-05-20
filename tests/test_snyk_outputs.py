@@ -119,3 +119,35 @@ def test_build_snyk_import_document_default_org_slug_fallback() -> None:
         default_org_id="default-org-id",
     )
     assert doc["targets"][0]["target"]["name"] == "NOPM/r1"
+
+
+def test_build_snyk_import_document_skips_empty_rows() -> None:
+    rows = [
+        {
+            "repository_path": "P1/empty",
+            "repository_name": "empty",
+            "production_branch": "",
+            "is_empty": True,
+        },
+        {
+            "repository_path": "P1/active",
+            "repository_name": "active",
+            "production_branch": "main",
+            "is_empty": False,
+        },
+    ]
+    doc = build_snyk_import_document(rows)
+    assert len(doc["targets"]) == 1
+    assert doc["targets"][0]["target"]["repoSlug"] == "active"
+
+
+def test_build_snyk_import_document_includes_legacy_rows_without_is_empty() -> None:
+    rows = [
+        {
+            "repository_path": "P1/legacy",
+            "repository_name": "legacy",
+            "production_branch": "main",
+        },
+    ]
+    doc = build_snyk_import_document(rows)
+    assert len(doc["targets"]) == 1

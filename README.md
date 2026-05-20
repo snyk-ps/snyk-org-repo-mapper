@@ -94,7 +94,7 @@ pip install -e ".[dev]"
 
 ### Stage 1 — `discover bitbucket` or `discover spreadsheet`
 
-**Bitbucket** walks projects and repositories, reads a YAML file from each repo (see [YAML format](#yaml-file-format)), merges AppSec fields with API metadata, and either prints a JSON **array of rows** to stdout or writes **discovery JSON** with `-o` / `--output`.
+**Bitbucket** walks projects and repositories, checks each repo for commits (zero commits → `is_empty: true`), reads a YAML file from non-empty repos (see [YAML format](#yaml-file-format)), merges AppSec fields with API metadata, and either prints a JSON **array of rows** to stdout or writes **discovery JSON** with `-o` / `--output`. With `-o`, also writes **`bitbucket-empty-repos.json`** by default listing empty repositories (override with `--empty-repos-output`; disable with `--no-empty-repos-output`).
 
 **Spreadsheet** maps columns A/B/D into the same row shape (see [Stage 1 (spreadsheet)](#stage-1-spreadsheet)) and writes the same discovery format with `-o`.
 
@@ -114,7 +114,7 @@ Reads `broker-org-plan.json` and **POST**s org–connection integrations for eac
 
 ### Stage 3 — `snyk-import`
 
-Reads `--discovery`, builds import targets, then calls the **Snyk REST API** to resolve `orgId` and `integrationId`. Optional `--snyk-orgs` cross-checks that org names cover the APM codes needed by the import. Optional **`--default-org-id`** routes targets from Bitbucket projects with no `apm_code` into one org; their `target.name` is **`{projectKey}/{repository_name}`** (repository slug when display name is absent) so repos with the same name in different projects stay unique. **No Bitbucket HTTP** in this stage.
+Reads `--discovery`, builds import targets (skips rows with **`is_empty: true`**), then calls the **Snyk REST API** to resolve `orgId` and `integrationId`. Optional `--snyk-orgs` cross-checks that org names cover the APM codes needed by the import. Optional **`--default-org-id`** routes targets from Bitbucket projects with no `apm_code` into one org; their `target.name` is **`{projectKey}/{repository_name}`** (repository slug when display name is absent) so repos with the same name in different projects stay unique. **No Bitbucket HTTP** in this stage.
 
 ## Configuration by stage
 
@@ -128,6 +128,11 @@ Reads `--discovery`, builds import targets, then calls the **Snyk REST API** to 
 | `BITBUCKET_HTTP_RETRIES` | No | Max attempts per HTTP call (including first). Default `5`. |
 | `BITBUCKET_HTTP_BACKOFF_S` | No | Base seconds for exponential backoff. Default `1.0`. |
 | `BITBUCKET_FLUSH_INTERVAL` | No | When using `-o`, flush discovery every **N** new repos. Default `1`; overridable with `--flush-interval`. |
+
+| Flag | Description |
+|------|-------------|
+| `--empty-repos-output PATH` | Write empty-repository list JSON (default: `bitbucket-empty-repos.json` when `-o` is set). |
+| `--no-empty-repos-output` | Do not write the empty-repos file even when `-o` is set. |
 
 ### Stage 1 (spreadsheet)
 
@@ -183,7 +188,7 @@ If you omit `--env-file`, the CLI loads `.env` from the **current working direct
 
 | Command | Purpose | Key flags |
 |---------|---------|-----------|
-| `discover bitbucket` | Bitbucket → discovery or stdout rows | `-o`, `--env-file`, `--max-repos`, `--flush-interval` |
+| `discover bitbucket` | Bitbucket → discovery or stdout rows | `-o`, `--empty-repos-output`, `--no-empty-repos-output`, `--env-file`, `--max-repos`, `--flush-interval` |
 | `discover spreadsheet` | `.xlsx` → discovery or stdout rows | `-i` / `--input`, `-o` |
 | `snyk-orgs` | discovery → `snyk-orgs.json` | `--discovery`, `--output`, `--group-id`, `--template-org-id`, `--dry-run` |
 | `snyk-import` | discovery → `snyk-import.json` + Snyk IDs | `--discovery`, `--output`, `--snyk-orgs` (optional), `--default-org-id` (optional), `--env-file`, `--dry-run` |
@@ -210,7 +215,8 @@ PYTHONPATH=src python src/main.py snyk-import -h
       "repository_path": "MYPROJ/my-service",
       "repository_name": "my-service",
       "production_branch": "main",
-      "bitbucket_project_name": "My Project"
+      "bitbucket_project_name": "My Project",
+      "is_empty": false
     }
   ],
   "checkpoint": {
@@ -220,7 +226,27 @@ PYTHONPATH=src python src/main.py snyk-import -h
 }
 ```
 
-`checkpoint` may be `null` when empty or not yet written. **Stdout** (no `-o`) is still a **bare array** of the same row objects.
+`checkpoint` may be `null` when empty or not yet written. **Stdout** (no `-o`) is still a **bare array** of the same row objects. Bitbucket rows include **`is_empty`** (`true` when the repo has zero commits). Spreadsheet rows omit `is_empty`; Stage 3 treats missing `is_empty` as not empty.
+
+### `bitbucket-empty-repos.json` (Stage 1 Bitbucket, with `-o`)
+
+Written by default alongside discovery (see `--empty-repos-output`). Lists repositories with `is_empty: true`:
+
+```json
+{
+  "version": 1,
+  "source": "bitbucket",
+  "repositories": [
+    {
+      "repository_path": "MYPROJ/new-repo",
+      "project_key": "MYPROJ",
+      "repo_slug": "new-repo",
+      "repository_name": "new-repo",
+      "bitbucket_project_name": "My Project"
+    }
+  ]
+}
+```
 
 ### Primary mapping (legacy)
 

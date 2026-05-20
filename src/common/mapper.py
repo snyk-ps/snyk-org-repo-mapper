@@ -12,6 +12,11 @@ from integrations.bitbucket import (
 )
 
 
+def row_is_empty(row: dict[str, Any]) -> bool:
+    """Return whether a discovery row is marked as an empty Bitbucket repository."""
+    return row.get("is_empty") is True
+
+
 def mapping_row(
     *,
     project_key: str,
@@ -20,6 +25,7 @@ def mapping_row(
     repo_name: str,
     file_bytes: bytes | None,
     default_display: str,
+    is_empty: bool,
 ) -> dict[str, Any]:
     """Assemble one output row combining API metadata and optional file content.
 
@@ -53,6 +59,7 @@ def mapping_row(
         "repository_name": repo_name,
         "production_branch": production_branch,
         "bitbucket_project_name": project_name,
+        "is_empty": is_empty,
     }
 
 
@@ -93,7 +100,10 @@ def iter_mapping(
                 return
             repo_name = name if isinstance(name, str) else slug
             at_ref, default_display = default_branch_tuple(repo)
-            raw = client.fetch_raw_file(pkey, slug, file_path, at_ref)
+            is_empty = not client.repository_has_commits(pkey, slug)
+            raw = None
+            if not is_empty:
+                raw = client.fetch_raw_file(pkey, slug, file_path, at_ref)
             row = mapping_row(
                 project_key=pkey,
                 project_name=pname,
@@ -101,6 +111,7 @@ def iter_mapping(
                 repo_name=repo_name,
                 file_bytes=raw,
                 default_display=default_display,
+                is_empty=is_empty,
             )
             new_count += 1
             yield row

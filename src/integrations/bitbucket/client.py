@@ -160,6 +160,16 @@ class BitbucketServerClient:
                 break
             start = next_start
 
+    def repository_has_commits(self, project_key: str, repo_slug: str) -> bool:
+        """Return whether the repository has at least one commit."""
+        pk = quote(project_key, safe="")
+        slug = quote(repo_slug, safe="")
+        path = f"rest/api/1.0/projects/{pk}/repos/{slug}/commits?limit=1"
+        page = self._request_json(path)
+        for _ in iter_paged_values(page):
+            return True
+        return False
+
     def fetch_raw_file(
         self,
         project_key: str,

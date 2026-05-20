@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from common.mapper import row_is_empty
+
 
 SNYK_PLACEHOLDER_GROUP_ID = "<public_snyk_group_id>"
 SNYK_PLACEHOLDER_SOURCE_ORG_ID = "<public_snyk_organization_id>"
@@ -82,6 +84,8 @@ def build_snyk_import_document(
     )
     targets: list[dict[str, Any]] = []
     for row in rows:
+        if row_is_empty(row):
+            continue
         path = row.get("repository_path")
         if not isinstance(path, str) or "/" not in path:
             continue

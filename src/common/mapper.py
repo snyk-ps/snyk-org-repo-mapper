@@ -10,6 +10,7 @@ from integrations.bitbucket import (
     BitbucketServerClient,
     default_branch_tuple,
 )
+from integrations.bitbucket.client import parse_committer_identity
 
 
 def row_is_empty(row: dict[str, Any]) -> bool:
@@ -26,6 +27,8 @@ def mapping_row(
     file_bytes: bytes | None,
     default_display: str,
     is_empty: bool,
+    last_committer_name: str | None = None,
+    last_committer_email: str | None = None,
 ) -> dict[str, Any]:
     """Assemble one output row combining API metadata and optional file content.
 
@@ -60,6 +63,8 @@ def mapping_row(
         "production_branch": production_branch,
         "bitbucket_project_name": project_name,
         "is_empty": is_empty,
+        "last_committer_name": last_committer_name,
+        "last_committer_email": last_committer_email,
     }
 
 
@@ -100,7 +105,12 @@ def iter_mapping(
                 return
             repo_name = name if isinstance(name, str) else slug
             at_ref, default_display = default_branch_tuple(repo)
-            is_empty = not client.repository_has_commits(pkey, slug)
+            latest_commit = client.repository_latest_commit(pkey, slug)
+            is_empty = latest_commit is None
+            committer_name: str | None = None
+            committer_email: str | None = None
+            if latest_commit is not None:
+                committer_name, committer_email = parse_committer_identity(latest_commit)
             raw = None
             if not is_empty:
                 raw = client.fetch_raw_file(pkey, slug, file_path, at_ref)
@@ -112,6 +122,8 @@ def iter_mapping(
                 file_bytes=raw,
                 default_display=default_display,
                 is_empty=is_empty,
+                last_committer_name=committer_name,
+                last_committer_email=committer_email,
             )
             new_count += 1
             yield row

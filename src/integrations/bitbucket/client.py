@@ -21,6 +21,25 @@ def iter_paged_values(payload: dict[str, Any]) -> Iterator[dict[str, Any]]:
     yield from (item for item in values if isinstance(item, dict))
 
 
+def _person_identity(person: Any) -> tuple[str | None, str | None]:
+    """Return ``(name, email)`` from a Bitbucket commit author/committer object."""
+    if not isinstance(person, dict):
+        return None, None
+    name = person.get("name")
+    email = person.get("emailAddress")
+    n = name if isinstance(name, str) and name.strip() else None
+    e = email if isinstance(email, str) and email.strip() else None
+    return n, e
+
+
+def parse_committer_identity(commit: dict[str, Any]) -> tuple[str | None, str | None]:
+    """Extract committer name and email from a commit, falling back to author."""
+    name, email = _person_identity(commit.get("committer"))
+    if name is not None or email is not None:
+        return name, email
+    return _person_identity(commit.get("author"))
+
+
 def default_branch_tuple(repo: dict[str, Any]) -> tuple[str, str]:
     """Return ``(at_ref, display_id)`` for the repository default branch.
 
@@ -160,15 +179,19 @@ class BitbucketServerClient:
                 break
             start = next_start
 
-    def repository_has_commits(self, project_key: str, repo_slug: str) -> bool:
-        """Return whether the repository has at least one commit."""
+    def repository_latest_commit(
+        self,
+        project_key: str,
+        repo_slug: str,
+    ) -> dict[str, Any] | None:
+        """Return the latest commit object, or ``None`` when the repository has no commits."""
         pk = quote(project_key, safe="")
         slug = quote(repo_slug, safe="")
         path = f"rest/api/1.0/projects/{pk}/repos/{slug}/commits?limit=1"
         page = self._request_json(path)
-        for _ in iter_paged_values(page):
-            return True
-        return False
+        for commit in iter_paged_values(page):
+            return commit
+        return None
 
     def fetch_raw_file(
         self,

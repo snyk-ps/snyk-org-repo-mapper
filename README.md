@@ -94,7 +94,7 @@ pip install -e ".[dev]"
 
 ### Stage 1 — `discover bitbucket` or `discover spreadsheet`
 
-**Bitbucket** walks projects and repositories, checks each repo for commits (zero commits → `is_empty: true`), reads a YAML file from non-empty repos (see [YAML format](#yaml-file-format)), merges AppSec fields with API metadata, and either prints a JSON **array of rows** to stdout or writes **discovery JSON** with `-o` / `--output`. With `-o`, also writes **`bitbucket-empty-repos.json`** by default listing empty repositories (override with `--empty-repos-output`; disable with `--no-empty-repos-output`).
+**Bitbucket** walks projects and repositories, checks each repo for commits (zero commits → `is_empty: true`), records **`last_committer_name`** and **`last_committer_email`** from the latest commit when not empty (API `committer`, falling back to `author`), reads a YAML file from non-empty repos (see [YAML format](#yaml-file-format)), merges AppSec fields with API metadata, and either prints a JSON **array of rows** to stdout or writes **discovery JSON** with `-o` / `--output`. With `-o`, also writes **`bitbucket-empty-repos.json`** by default listing empty repositories (override with `--empty-repos-output`; disable with `--no-empty-repos-output`).
 
 **Spreadsheet** maps columns A/B/D into the same row shape (see [Stage 1 (spreadsheet)](#stage-1-spreadsheet)) and writes the same discovery format with `-o`.
 
@@ -216,7 +216,9 @@ PYTHONPATH=src python src/main.py snyk-import -h
       "repository_name": "my-service",
       "production_branch": "main",
       "bitbucket_project_name": "My Project",
-      "is_empty": false
+      "is_empty": false,
+      "last_committer_name": "charlie",
+      "last_committer_email": "charlie@example.com"
     }
   ],
   "checkpoint": {
@@ -226,7 +228,7 @@ PYTHONPATH=src python src/main.py snyk-import -h
 }
 ```
 
-`checkpoint` may be `null` when empty or not yet written. **Stdout** (no `-o`) is still a **bare array** of the same row objects. Bitbucket rows include **`is_empty`** (`true` when the repo has zero commits). Spreadsheet rows omit `is_empty`; Stage 3 treats missing `is_empty` as not empty.
+`checkpoint` may be `null` when empty or not yet written. **Stdout** (no `-o`) is still a **bare array** of the same row objects. Bitbucket rows include **`is_empty`** (`true` when the repo has zero commits) and **`last_committer_name`** / **`last_committer_email`** (`null` when empty; from the latest commit otherwise). Spreadsheet rows omit `is_empty` and committer fields; Stage 3 treats missing `is_empty` as not empty. Stages 2–3 do not use committer metadata.
 
 ### `bitbucket-empty-repos.json` (Stage 1 Bitbucket, with `-o`)
 

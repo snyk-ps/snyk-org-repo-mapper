@@ -18,9 +18,13 @@ def test_mapping_row_with_yaml() -> None:
         file_bytes=body,
         default_display="main",
         is_empty=False,
+        last_committer_name="alice",
+        last_committer_email="alice@example.com",
     )
     assert row["apm_code"] == "A1"
     assert row["is_empty"] is False
+    assert row["last_committer_name"] == "alice"
+    assert row["last_committer_email"] == "alice@example.com"
     assert row["repository_path"] == "PRJ/svc"
     assert row["repository_name"] == "svc"
     assert row["production_branch"] == "prod"
@@ -50,8 +54,10 @@ def test_collect_mapping_invokes_client() -> None:
             assert project_key == "PRJ"
             yield {"slug": "r1", "name": "R1", "defaultBranch": "refs/heads/main"}
 
-        def repository_has_commits(self, project_key: str, repo_slug: str) -> bool:
-            return True
+        def repository_latest_commit(self, project_key: str, repo_slug: str):
+            return {
+                "committer": {"name": "dev", "emailAddress": "dev@example.com"},
+            }
 
         def fetch_raw_file(self, pk: str, slug: str, path: str, at_ref: str):
             assert path == "f.yaml"
@@ -61,6 +67,8 @@ def test_collect_mapping_invokes_client() -> None:
     assert len(rows) == 1
     assert rows[0]["apm_code"] == "ZZ"
     assert rows[0]["repository_path"] == "PRJ/r1"
+    assert rows[0]["last_committer_name"] == "dev"
+    assert rows[0]["last_committer_email"] == "dev@example.com"
 
 
 def test_iter_mapping_skips_completed() -> None:
@@ -73,8 +81,8 @@ def test_iter_mapping_skips_completed() -> None:
             yield {"slug": "a", "name": "A", "defaultBranch": "refs/heads/main"}
             yield {"slug": "b", "name": "B", "defaultBranch": "refs/heads/main"}
 
-        def repository_has_commits(self, project_key: str, repo_slug: str) -> bool:
-            return True
+        def repository_latest_commit(self, project_key: str, repo_slug: str):
+            return {"committer": {"name": "u", "emailAddress": "u@example.com"}}
 
         def fetch_raw_file(self, pk: str, slug: str, path: str, at_ref: str):
             return f"security:\n  apmCode: {slug}\n".encode()
@@ -101,8 +109,8 @@ def test_iter_mapping_respects_max_repos() -> None:
             yield {"slug": "a", "name": "A", "defaultBranch": "refs/heads/main"}
             yield {"slug": "b", "name": "B", "defaultBranch": "refs/heads/main"}
 
-        def repository_has_commits(self, project_key: str, repo_slug: str) -> bool:
-            return True
+        def repository_latest_commit(self, project_key: str, repo_slug: str):
+            return {"committer": {"name": "u", "emailAddress": "u@example.com"}}
 
         def fetch_raw_file(self, pk: str, slug: str, path: str, at_ref: str):
             return b"security:\n  apmCode: X\n"
@@ -122,8 +130,8 @@ def test_iter_mapping_empty_repo_skips_yaml() -> None:
         def iter_repositories(self, project_key: str, *, page_limit: int = 100):
             yield {"slug": "empty", "name": "Empty", "defaultBranch": "refs/heads/main"}
 
-        def repository_has_commits(self, project_key: str, repo_slug: str) -> bool:
-            return False
+        def repository_latest_commit(self, project_key: str, repo_slug: str):
+            return None
 
         def fetch_raw_file(self, pk: str, slug: str, path: str, at_ref: str):
             fetched.append(slug)
@@ -133,6 +141,8 @@ def test_iter_mapping_empty_repo_skips_yaml() -> None:
     assert len(rows) == 1
     assert rows[0]["is_empty"] is True
     assert rows[0]["apm_code"] is None
+    assert rows[0]["last_committer_name"] is None
+    assert rows[0]["last_committer_email"] is None
     assert fetched == []
 
 

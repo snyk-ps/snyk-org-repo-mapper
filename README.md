@@ -106,7 +106,7 @@ Reads `--discovery`, writes **`snyk-orgs.json`** in the shape expected for Snyk 
 
 ### Stage 2.1 — Broker Plan (`snyk-broker-plan`)
 
-Reads `snyk-orgs.json`, lists Universal Broker **deployments** and **connections** for `SNYK_TENANT_ID` + `SNYK_BROKER_INSTALL_ID`, keeps `bitbucket-server` connections only, pre-checks orgs already integrated per connection, and writes **`broker-org-plan.json`** with round-robin **assignments**. **GET only** (no Broker mutations).
+Reads `snyk-orgs.json`, lists Universal Broker **deployments** and **connections** for `SNYK_TENANT_ID` + `SNYK_BROKER_INSTALL_ID`, keeps `bitbucket-server` connections only (SCM type from `attributes.integrationType` or `integration_type`, not JSON:API resource `type`), pre-checks orgs already integrated per connection, and writes **`broker-org-plan.json`** with round-robin **assignments**. **GET only** (no Broker mutations).
 
 ### Stage 2.2 — Broker Apply (`snyk-broker-apply`)
 

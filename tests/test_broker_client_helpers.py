@@ -10,6 +10,30 @@ def test_connection_type_from_attributes() -> None:
     assert _connection_type_slug(item) == "bitbucket-server"
 
 
+def test_connection_type_from_integration_type_camel_attributes() -> None:
+    item = {
+        "id": "c1",
+        "type": "connection",
+        "attributes": {"integrationType": "bitbucket-server"},
+    }
+    assert _connection_type_slug(item) == "bitbucket-server"
+
+
+def test_connection_type_from_top_level_integration_type_camel() -> None:
+    item = {
+        "id": "c1",
+        "type": "connection",
+        "attributes": {},
+        "integrationType": "bitbucket-server",
+    }
+    assert _connection_type_slug(item) == "bitbucket-server"
+
+
+def test_connection_type_none_when_only_resource_kind() -> None:
+    item = {"id": "c1", "type": "connection", "attributes": {}}
+    assert _connection_type_slug(item) is None
+
+
 def test_org_refs_from_attributes() -> None:
     item = {
         "id": "int-1",

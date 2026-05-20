@@ -4,8 +4,9 @@ JSON:API list responses use top-level ``data`` (array of resources) and ``links.
 for pagination. Each resource has ``id`` and ``attributes``.
 
 - **Deployment** resources: ``id`` is the deployment UUID.
-- **Connection** resources: ``attributes.type`` (or ``integration_type``) identifies SCM;
-  only ``bitbucket-server`` is used for org allocation.
+- **Connection** resources: SCM type is usually ``attributes.integrationType`` (or
+  ``integration_type`` / ``type``); JSON:API resource ``type`` is often ``connection``.
+  Only ``bitbucket-server`` is used for org allocation.
 - **Integration** resources on a connection: ``attributes.org_id`` / ``org_name`` (or
   ``relationships.organization.data.id``) identify linked Snyk orgs.
 
@@ -51,18 +52,47 @@ class BrokerConnectionIntegration:
     integration_id: str | None
 
 
+_JSONAPI_RESOURCE_KIND_SLUGS = frozenset(
+    {"connection", "broker-connection", "integration", "deployment"}
+)
+
+_ATTR_SCM_TYPE_KEYS = (
+    "integrationType",
+    "integration_type",
+    "type",
+    "scmType",
+    "scm_type",
+    "connectionType",
+    "connection_type",
+    "slug",
+)
+
+
+def _scm_type_slug_from_string(raw: str) -> str | None:
+    slug = raw.strip().lower().replace("_", "-")
+    if slug in _JSONAPI_RESOURCE_KIND_SLUGS:
+        return None
+    return slug
+
+
 def _connection_type_slug(item: dict[str, Any]) -> str | None:
     attrs = item.get("attributes")
     if isinstance(attrs, dict):
-        for key in ("type", "integration_type", "slug", "scm_type"):
+        for key in _ATTR_SCM_TYPE_KEYS:
             raw = attrs.get(key)
             if isinstance(raw, str) and raw.strip():
-                return raw.strip().lower().replace("_", "-")
+                slug = _scm_type_slug_from_string(raw)
+                if slug is not None:
+                    return slug
+    for key in ("integrationType", "integration_type"):
+        raw = item.get(key)
+        if isinstance(raw, str) and raw.strip():
+            slug = _scm_type_slug_from_string(raw)
+            if slug is not None:
+                return slug
     raw_type = item.get("type")
     if isinstance(raw_type, str) and raw_type.strip():
-        slug = raw_type.strip().lower().replace("_", "-")
-        if slug not in ("connection", "broker-connection"):
-            return slug
+        return _scm_type_slug_from_string(raw_type)
     return None
 
 
@@ -194,6 +224,8 @@ class BrokerClient:
         dep_url = f"{self._install_base()}/deployments?{self._version_query()}"
         deployments = self._iter_paginated_data(dep_url)
         out: list[BrokerConnection] = []
+        total_seen = 0
+        sample_attr_keys: list[str] | None = None
         for dep in deployments:
             dep_id = dep.get("id")
             if not isinstance(dep_id, str) or not dep_id.strip():
@@ -206,6 +238,11 @@ class BrokerClient:
                 cid = conn.get("id")
                 if not isinstance(cid, str) or not cid.strip():
                     continue
+                total_seen += 1
+                if sample_attr_keys is None:
+                    attrs = conn.get("attributes")
+                    if isinstance(attrs, dict):
+                        sample_attr_keys = sorted(str(k) for k in attrs)
                 ctype = _connection_type_slug(conn)
                 if ctype != "bitbucket-server":
                     continue
@@ -217,6 +254,16 @@ class BrokerClient:
                         display_name=_display_name_from_item(conn),
                     )
                 )
+        if not out and total_seen > 0:
+            keys_hint = (
+                ", ".join(sample_attr_keys) if sample_attr_keys else "(no attributes object)"
+            )
+            msg = (
+                f"Found {total_seen} broker connection(s) but none with SCM type "
+                f"bitbucket-server (check attributes.integrationType or "
+                f"integration_type). Sample attribute keys: {keys_hint}"
+            )
+            raise ValueError(msg)
         return out
 
     def list_connection_integrations(

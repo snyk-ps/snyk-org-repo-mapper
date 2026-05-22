@@ -22,7 +22,11 @@ from snyk.enrichment import (
     summarize_enrichment_plan,
     validate_orgs_file_lists_codes,
 )
-from snyk.outputs import build_snyk_import_document
+from snyk.outputs import (
+    batch_import_output_paths,
+    build_snyk_import_document,
+    split_import_targets,
+)
 from snyk.project_context import project_apm_map_from_rows
 
 
@@ -67,6 +71,16 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Snyk organization id (UUID from the Snyk UI or API) used for import targets "
             "whose Bitbucket project has no apm_code in discovery (all-null APM rows)."
+        ),
+    )
+    parser.add_argument(
+        "--repos-per-batch",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "When set, write multiple import JSON files with at most N targets each "
+            "(e.g. snyk-import-001.json, snyk-import-002.json) using --output as the name stem."
         ),
     )
     parser.add_argument(
@@ -158,11 +172,39 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.dry_run:
         print(plan)
+        if args.repos_per_batch is not None:
+            if args.repos_per_batch < 1:
+                print("repos-per-batch must be >= 1", file=sys.stderr)
+                return 2
+            targets = new_doc.get("targets")
+            if not isinstance(targets, list):
+                targets = []
+            batches = split_import_targets(targets, args.repos_per_batch)
+            paths = batch_import_output_paths(args.output, len(batches))
+            for path, batch in zip(paths, batches, strict=True):
+                print(f"  {path}: {len(batch)} targets", file=sys.stderr)
         return 0
 
     try:
         assert_safe_filesystem_path(args.output)
-        atomic_write_json(args.output, new_doc)
+        if args.repos_per_batch is not None:
+            if args.repos_per_batch < 1:
+                print("repos-per-batch must be >= 1", file=sys.stderr)
+                return 2
+            targets = new_doc.get("targets")
+            if not isinstance(targets, list):
+                targets = []
+            batches = split_import_targets(targets, args.repos_per_batch)
+            if not batches:
+                print("No import targets to write.", file=sys.stderr)
+                return 0
+            paths = batch_import_output_paths(args.output, len(batches))
+            for path, batch in zip(paths, batches, strict=True):
+                assert_safe_filesystem_path(path)
+                batch_doc = {**new_doc, "targets": batch}
+                atomic_write_json(path, batch_doc)
+        else:
+            atomic_write_json(args.output, new_doc)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2

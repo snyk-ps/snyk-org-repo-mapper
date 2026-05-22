@@ -3,6 +3,9 @@
 import json
 from io import BytesIO
 from unittest.mock import patch
+from urllib.error import HTTPError
+
+import pytest
 
 from integrations.bitbucket.client import (
     BitbucketServerClient,
@@ -56,6 +59,28 @@ def test_parse_committer_identity_author_fallback() -> None:
 def test_parse_committer_identity_missing_returns_none() -> None:
     assert parse_committer_identity({}) == (None, None)
     assert parse_committer_identity({"committer": {}, "author": {}}) == (None, None)
+
+
+def test_get_repository_returns_payload() -> None:
+    payload = json.dumps({"slug": "repo", "name": "Repo"}).encode()
+    client = BitbucketServerClient("https://bb.example.com", "token")
+
+    with patch("integrations.bitbucket.client.urlopen") as mock_open:
+        mock_open.return_value.__enter__.return_value = BytesIO(payload)
+        repo = client.get_repository("PRJ", "repo")
+
+    assert repo["slug"] == "repo"
+
+
+def test_get_repository_404_raises_value_error() -> None:
+    client = BitbucketServerClient("https://bb.example.com", "token")
+
+    def raise_404(*_a, **_k):
+        raise HTTPError("http://x", 404, "Not Found", None, None)
+
+    with patch("integrations.bitbucket.client.urlopen", side_effect=raise_404):
+        with pytest.raises(ValueError, match="not found"):
+            client.get_repository("PRJ", "missing")
 
 
 def test_parse_committer_identity_partial_committer_uses_author() -> None:

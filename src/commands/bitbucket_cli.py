@@ -6,12 +6,15 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Sequence
 
-from common.discovery_document import build_discovery_document, load_resume_rows
-from common.empty_repos_document import DEFAULT_EMPTY_REPOS_FILENAME, write_empty_repos_document
-from common.mapper import iter_mapping, row_is_empty
-from common.output_state import atomic_write_json, completed_keys_from_rows, row_repo_key
+from commands.discovery_helpers import (
+    log_empty_repo_summary,
+    resolve_empty_repos_path,
+    run_discovery_with_file_output,
+)
+from common.empty_repos_document import write_empty_repos_document
+from common.mapper import iter_mapping
 from config import load_dotenv_file, load_settings
 from integrations.bitbucket import BitbucketServerClient
 
@@ -74,119 +77,6 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _last_checkpoint_key(rows: list[dict[str, Any]]) -> tuple[str, str] | None:
-    for row in reversed(rows):
-        k = row_repo_key(row)
-        if k is not None:
-            return k
-    return None
-
-
-def _resolve_empty_repos_path(
-    *,
-    output_path: str | None,
-    empty_repos_output: str | None,
-    no_empty_repos_output: bool,
-) -> Path | None:
-    if no_empty_repos_output:
-        return None
-    if empty_repos_output is not None:
-        return Path(empty_repos_output)
-    if output_path:
-        return Path(DEFAULT_EMPTY_REPOS_FILENAME)
-    return None
-
-
-def _flush_discovery(
-    output_path: Path,
-    rows: list[dict[str, Any]],
-    *,
-    empty_repos_path: Path | None,
-) -> None:
-    """Persist discovery JSON atomically."""
-    ck = _last_checkpoint_key(rows)
-    atomic_write_json(
-        output_path,
-        build_discovery_document(rows, "bitbucket", last_completed=ck),
-    )
-    if empty_repos_path is not None:
-        write_empty_repos_document(empty_repos_path, rows)
-
-
-def _log_empty_repo_summary(rows: list[dict[str, Any]], empty_repos_path: Path | None) -> None:
-    n_empty = sum(1 for row in rows if row_is_empty(row))
-    if empty_repos_path is not None:
-        print(
-            f"{n_empty} empty repositories (is_empty=true); see {empty_repos_path}",
-            file=sys.stderr,
-        )
-
-
-def _run_with_file_output(
-    *,
-    output_path: Path,
-    client: BitbucketServerClient,
-    file_path: str,
-    max_repos: int | None,
-    flush_interval: int,
-    empty_repos_path: Path | None,
-) -> None:
-    """Incremental discovery with resume and periodic flush."""
-    try:
-        existing_rows = load_resume_rows(output_path)
-    except ValueError as exc:
-        raise RuntimeError(str(exc)) from exc
-    completed = completed_keys_from_rows(existing_rows)
-    rows_accum: list[dict[str, Any]] = list(existing_rows)
-    pending_flush = 0
-    try:
-        for row in iter_mapping(
-            client,
-            file_path,
-            completed_keys=completed,
-            max_repos=max_repos,
-        ):
-            rows_accum.append(row)
-            key = row_repo_key(row)
-            if key is not None:
-                completed.add(key)
-            pending_flush += 1
-            if pending_flush >= flush_interval:
-                _flush_discovery(
-                    output_path,
-                    rows_accum,
-                    empty_repos_path=empty_repos_path,
-                )
-                pending_flush = 0
-    finally:
-        _flush_discovery(
-            output_path,
-            rows_accum,
-            empty_repos_path=empty_repos_path,
-        )
-        _log_empty_repo_summary(rows_accum, empty_repos_path)
-
-
-def _run_stdout(
-    *,
-    client: BitbucketServerClient,
-    file_path: str,
-    max_repos: int | None,
-) -> list[dict[str, Any]]:
-    """Write a JSON array of rows to stdout (no discovery wrapper)."""
-    rows = list(
-        iter_mapping(
-            client,
-            file_path,
-            completed_keys=set(),
-            max_repos=max_repos,
-        )
-    )
-    text = json.dumps(rows, indent=2, ensure_ascii=False) + "\n"
-    sys.stdout.write(text)
-    return rows
-
-
 def main(argv: Sequence[str] | None = None) -> int:
     """Run Bitbucket discovery CLI."""
     raw = list(argv) if argv is not None else sys.argv[1:]
@@ -219,30 +109,38 @@ def main(argv: Sequence[str] | None = None) -> int:
         http_max_attempts=settings.http_max_attempts,
         http_backoff_seconds=settings.http_backoff_seconds,
     )
-    empty_repos_path = _resolve_empty_repos_path(
+    empty_repos_path = resolve_empty_repos_path(
         output_path=args.output,
         empty_repos_output=args.empty_repos_output,
         no_empty_repos_output=args.no_empty_repos_output,
     )
     try:
         if args.output:
-            _run_with_file_output(
+            run_discovery_with_file_output(
                 output_path=Path(args.output),
-                client=client,
-                file_path=settings.file_path,
-                max_repos=args.max_repos,
+                row_iter_factory=lambda completed: iter_mapping(
+                    client,
+                    settings.file_path,
+                    completed_keys=completed,
+                    max_repos=args.max_repos,
+                ),
                 flush_interval=flush_interval,
                 empty_repos_path=empty_repos_path,
             )
         else:
-            rows = _run_stdout(
-                client=client,
-                file_path=settings.file_path,
-                max_repos=args.max_repos,
+            rows = list(
+                iter_mapping(
+                    client,
+                    settings.file_path,
+                    completed_keys=set(),
+                    max_repos=args.max_repos,
+                )
             )
+            text = json.dumps(rows, indent=2, ensure_ascii=False) + "\n"
+            sys.stdout.write(text)
             if empty_repos_path is not None:
                 write_empty_repos_document(empty_repos_path, rows)
-                _log_empty_repo_summary(rows, empty_repos_path)
+                log_empty_repo_summary(rows, empty_repos_path)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2

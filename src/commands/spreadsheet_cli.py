@@ -1,4 +1,4 @@
-"""CLI: Stage 1 spreadsheet discovery (writes discovery JSON)."""
+"""CLI: Stage 1 spreadsheet-driven Bitbucket discovery (writes discovery JSON)."""
 
 from __future__ import annotations
 
@@ -8,17 +8,25 @@ import sys
 from pathlib import Path
 from typing import Any, Sequence
 
-from common.discovery_document import build_discovery_document
-from common.output_state import assert_safe_filesystem_path, atomic_write_json
-from common.spreadsheet.mapping import mapping_rows_from_xlsx
+from commands.discovery_helpers import (
+    flush_discovery,
+    log_empty_repo_summary,
+    resolve_empty_repos_path,
+    run_discovery_with_file_output,
+)
+from common.empty_repos_document import write_empty_repos_document
+from common.mapper import iter_mapping_for_repos
+from common.spreadsheet.bb_repo_mapping import parse_bb_repo_mapping_sheet
+from config import load_dotenv_file, load_settings
+from integrations.bitbucket import BitbucketServerClient
 
 
 def build_parser() -> argparse.ArgumentParser:
     """Construct the spreadsheet discovery CLI parser."""
     parser = argparse.ArgumentParser(
         description=(
-            "Stage 1 (spreadsheet): build discovery JSON from an .xlsx "
-            "(columns A/B/D). Does not call Bitbucket."
+            "Stage 1 (spreadsheet): read bb-repo-mapping.xlsx (ProjectKey + repo list), "
+            "query Bitbucket for AppSec YAML per repo, and write discovery JSON."
         ),
     )
     parser.add_argument(
@@ -28,8 +36,8 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         metavar="PATH",
         help=(
-            "Input .xlsx file (first worksheet; columns A=APM, B=selector, D=repo name). "
-            "You may pass the same path as a positional argument instead."
+            "Input .xlsx (row 1: ProjectKey, RepoName; column B is semicolon-delimited "
+            "repo slugs). You may pass the same path as a positional argument."
         ),
     )
     parser.add_argument(
@@ -43,15 +51,54 @@ def build_parser() -> argparse.ArgumentParser:
         "-o",
         "--output",
         help=(
-            "Write discovery JSON (versioned: source=spreadsheet, rows). "
+            "Write discovery JSON (versioned: source=bitbucket, rows, optional checkpoint). "
             "If omitted, print a JSON array of rows to stdout."
         ),
+    )
+    parser.add_argument(
+        "--env-file",
+        type=Path,
+        help="Optional path to a .env file (defaults to ./.env if present).",
+    )
+    parser.add_argument(
+        "--max-repos",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Process at most N new repositories in this run (after resume skips). "
+            "Useful for stress tests or partial runs."
+        ),
+    )
+    parser.add_argument(
+        "--flush-interval",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Write discovery every N new repositories (default: BITBUCKET_FLUSH_INTERVAL "
+            "or 1). Applies when --output is set."
+        ),
+    )
+    parser.add_argument(
+        "--empty-repos-output",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Write empty-repository list JSON. Default: bitbucket-empty-repos.json "
+            "when -o/--output is set."
+        ),
+    )
+    parser.add_argument(
+        "--no-empty-repos-output",
+        action="store_true",
+        help="Do not write bitbucket-empty-repos.json even when -o/--output is set.",
     )
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run spreadsheet discovery CLI."""
+    """Run spreadsheet-driven Bitbucket discovery CLI."""
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
 
@@ -73,26 +120,76 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Input file not found: {inp}", file=sys.stderr)
         return 2
 
-    rows: list[dict[str, Any]]
+    load_dotenv_file(args.env_file)
     try:
-        rows = mapping_rows_from_xlsx(inp)
-    except (OSError, ValueError) as exc:
-        print(str(exc), file=sys.stderr)
-        return 2
-
-    try:
-        if args.output:
-            out_path = Path(args.output)
-            assert_safe_filesystem_path(out_path)
-            atomic_write_json(
-                out_path,
-                build_discovery_document(rows, "spreadsheet", last_completed=None),
-            )
-        else:
-            text = json.dumps(rows, indent=2, ensure_ascii=False) + "\n"
-            sys.stdout.write(text)
+        settings = load_settings()
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2
 
+    flush_interval = (
+        args.flush_interval if args.flush_interval is not None else settings.flush_interval
+    )
+    if flush_interval < 1:
+        print("flush interval must be >= 1", file=sys.stderr)
+        return 2
+
+    try:
+        repo_targets = parse_bb_repo_mapping_sheet(inp)
+    except (OSError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    client = BitbucketServerClient(
+        settings.bitbucket_url,
+        settings.bitbucket_pat,
+        http_max_attempts=settings.http_max_attempts,
+        http_backoff_seconds=settings.http_backoff_seconds,
+    )
+    empty_repos_path = resolve_empty_repos_path(
+        output_path=args.output,
+        empty_repos_output=args.empty_repos_output,
+        no_empty_repos_output=args.no_empty_repos_output,
+    )
+
+    try:
+        if args.output:
+            output_path = Path(args.output)
+
+            def factory(completed: set[tuple[str, str]]) -> Any:
+                return iter_mapping_for_repos(
+                    client,
+                    settings.file_path,
+                    repo_targets,
+                    completed_keys=completed,
+                    max_repos=args.max_repos,
+                )
+
+            run_discovery_with_file_output(
+                output_path=output_path,
+                row_iter_factory=factory,
+                flush_interval=flush_interval,
+                empty_repos_path=empty_repos_path,
+            )
+        else:
+            rows = list(
+                iter_mapping_for_repos(
+                    client,
+                    settings.file_path,
+                    repo_targets,
+                    completed_keys=set(),
+                    max_repos=args.max_repos,
+                )
+            )
+            text = json.dumps(rows, indent=2, ensure_ascii=False) + "\n"
+            sys.stdout.write(text)
+            if empty_repos_path is not None:
+                write_empty_repos_document(empty_repos_path, rows)
+                log_empty_repo_summary(rows, empty_repos_path)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     return 0

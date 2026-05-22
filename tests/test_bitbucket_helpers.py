@@ -3,6 +3,7 @@
 from integrations.bitbucket import (
     default_branch_tuple,
     iter_paged_values,
+    repository_has_default_branch,
 )
 
 
@@ -30,7 +31,16 @@ def test_default_branch_tuple_from_object() -> None:
     assert disp == "develop"
 
 
-def test_default_branch_tuple_missing_uses_main() -> None:
+def test_default_branch_tuple_missing_uses_master() -> None:
     at, disp = default_branch_tuple({})
-    assert at == "refs/heads/main"
-    assert disp == "main"
+    assert at == "refs/heads/master"
+    assert disp == "master"
+
+
+def test_repository_has_default_branch_false_when_missing() -> None:
+    assert repository_has_default_branch({}) is False
+    assert repository_has_default_branch({"defaultBranch": None}) is False
+
+
+def test_repository_has_default_branch_true_for_ref() -> None:
+    assert repository_has_default_branch({"defaultBranch": "refs/heads/main"}) is True

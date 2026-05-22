@@ -1,78 +1,63 @@
-"""Tests for spreadsheet column mapping into mapper rows."""
+"""Tests for bb-repo-mapping spreadsheet parsing (replaces legacy A/B/D mapping)."""
 
 from __future__ import annotations
 
+import zipfile
+from io import BytesIO
 from pathlib import Path
 
-import pytest
-
-from common.spreadsheet.mapping import (
-    mapping_row_from_abd,
-    mapping_rows_from_xlsx,
-)
+from common.spreadsheet.bb_repo_mapping import parse_bb_repo_mapping_sheet
 
 
-def test_bb_row_basic() -> None:
-    row = mapping_row_from_abd("ABC", "BB::MYPROJ::my-slug", "Pretty Name")
-    assert row == {
-        "apm_code": "ABC",
-        "repository_path": "MYPROJ/my-slug",
-        "repository_name": "Pretty Name",
-        "production_branch": "",
-        "bitbucket_project_name": "MYPROJ",
-    }
-
-
-def test_pg_row_skipped() -> None:
-    assert mapping_row_from_abd("X", "PG::BC3V::creditor-insurance-administration", "y") is None
-
-
-def test_empty_apm_none() -> None:
-    row = mapping_row_from_abd("  ", "BB::P::r", "nm")
-    assert row is not None
-    assert row["apm_code"] is None
-
-
-def test_none_apm() -> None:
-    row = mapping_row_from_abd(None, "BB::P::slug", "nm")
-    assert row["apm_code"] is None
-
-
-def test_empty_d_fallback_to_slug() -> None:
-    row = mapping_row_from_abd("A", "BB::P::fallback-name", "")
-    assert row["repository_name"] == "fallback-name"
-
-
-def test_none_d_fallback_to_slug() -> None:
-    row = mapping_row_from_abd("A", "BB::P::sluggy", None)
-    assert row["repository_name"] == "sluggy"
-
-
-def test_malformed_b_wrong_segments() -> None:
-    assert mapping_row_from_abd("A", "BB::onlytwo", "D") is None
-
-
-def test_malformed_b_extra_segments() -> None:
-    assert mapping_row_from_abd("A", "BB::x::y::z", "D") is None
-
-
-def test_empty_b_skipped() -> None:
-    assert mapping_row_from_abd("A", "", "D") is None
-
-
-@pytest.mark.skipif(
-    not (
-        Path(__file__).resolve().parents[1]
-        / "data"
-        / "AppSec Repo to APM - Sample.xlsx"
-    ).is_file(),
-    reason="Sample workbook not present in repo checkout",
-)
-def test_sample_xlsx_contains_path_and_skips_pg() -> None:
-    sample = (
-        Path(__file__).resolve().parents[1] / "data" / "AppSec Repo to APM - Sample.xlsx"
+def _minimal_bb_mapping_xlsx() -> bytes:
+    shared = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        "<si><t>ProjectKey</t></si><si><t>RepoName</t></si>"
+        "<si><t>MYPROJ</t></si><si><t>repo-a</t></si>"
+        "</sst>"
     )
-    rows = mapping_rows_from_xlsx(sample)
-    paths = {r["repository_path"] for r in rows}
-    assert "CGITRADE/CONFIG_FILES" in paths
-    assert "BC3V/creditor-insurance-administration" not in paths
+    sheet = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        '<sheetData>'
+        '<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row>'
+        '<row r="2"><c r="A2" t="s"><v>2</v></c><c r="B2" t="s"><v>3</v></c></row>'
+        "</sheetData></worksheet>"
+    )
+    buf = BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("xl/sharedStrings.xml", shared)
+        z.writestr(
+            "xl/workbook.xml",
+            '<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+            'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+            '<sheets><sheet name="S" sheetId="1" r:id="rId1"/></sheets></workbook>',
+        )
+        z.writestr(
+            "xl/_rels/workbook.xml.rels",
+            '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" '
+            'Target="worksheets/sheet1.xml"/></Relationships>',
+        )
+        z.writestr("xl/worksheets/sheet1.xml", sheet)
+        z.writestr(
+            "[Content_Types].xml",
+            '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+            '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+            '<Default Extension="xml" ContentType="application/xml"/>'
+            '<Override PartName="/xl/workbook.xml" '
+            'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+            '<Override PartName="/xl/worksheets/sheet1.xml" '
+            'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+            '<Override PartName="/xl/sharedStrings.xml" '
+            'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>'
+            "</Types>",
+        )
+    return buf.getvalue()
+
+
+def test_parse_single_repo(tmp_path: Path) -> None:
+    path = tmp_path / "map.xlsx"
+    path.write_bytes(_minimal_bb_mapping_xlsx())
+    assert parse_bb_repo_mapping_sheet(path) == [("MYPROJ", "repo-a")]

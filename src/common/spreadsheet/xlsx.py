@@ -119,6 +119,36 @@ def _sheet_max_row(sheet_root: ET.Element) -> int:
     return max_row
 
 
+def iter_first_sheet_ab(path: Path) -> Iterator[tuple[int, str | None, str | None]]:
+    """Yield ``(row_index_1based, col_a, col_b)`` for each row of the first sheet."""
+    path = Path(path)
+    if path.suffix.lower() != ".xlsx":
+        msg = f"Expected .xlsx file, got {path.suffix!r}"
+        raise ValueError(msg)
+    with zipfile.ZipFile(path) as z:
+        strings: list[str] = []
+        if "xl/sharedStrings.xml" in z.namelist():
+            ss_root = ET.fromstring(z.read("xl/sharedStrings.xml"))
+            strings = _parse_shared_strings(ss_root)
+        sheet_path = _first_worksheet_part_path(z)
+        sheet_root = ET.fromstring(z.read(sheet_path))
+        grid: dict[tuple[int, str], str] = {}
+        for c in sheet_root.findall(f".//{_NS_MAIN}c"):
+            ref = c.get("r")
+            if not ref:
+                continue
+            col_letters, row_idx = _split_cell_ref(ref)
+            if col_letters not in {"A", "B"}:
+                continue
+            val = _cell_display(c, strings)
+            grid[row_idx, col_letters] = val
+        max_row = _sheet_max_row(sheet_root)
+        if max_row < 1:
+            return
+        for row_idx in range(1, max_row + 1):
+            yield row_idx, grid.get((row_idx, "A")), grid.get((row_idx, "B"))
+
+
 def iter_first_sheet_abd(path: Path) -> Iterator[tuple[int, str | None, str | None, str | None]]:
     """Yield ``(row_index_1based, col_a, col_b, col_d)`` for each row of the first sheet.
 

@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from typing import Any
 
 from common.appsec_yaml import parse_appsec_yaml, resolve_production_branch
 from integrations.bitbucket import (
     BitbucketServerClient,
     default_branch_tuple,
+    repository_has_default_branch,
 )
 from integrations.bitbucket.client import parse_committer_identity
 
@@ -16,6 +17,15 @@ from integrations.bitbucket.client import parse_committer_identity
 def row_is_empty(row: dict[str, Any]) -> bool:
     """Return whether a discovery row is marked as an empty Bitbucket repository."""
     return row.get("is_empty") is True
+
+
+def _project_name_from_repo(repo: dict[str, Any], project_key: str) -> str:
+    project = repo.get("project")
+    if isinstance(project, dict):
+        name = project.get("name")
+        if isinstance(name, str) and name.strip():
+            return name.strip()
+    return project_key
 
 
 def mapping_row(
@@ -30,19 +40,7 @@ def mapping_row(
     last_committer_name: str | None = None,
     last_committer_email: str | None = None,
 ) -> dict[str, Any]:
-    """Assemble one output row combining API metadata and optional file content.
-
-    Args:
-        project_key: Bitbucket project key.
-        project_name: Bitbucket project display name.
-        repo_slug: Repository slug.
-        repo_name: Repository display name.
-        file_bytes: Raw file bytes from the configured path, or ``None`` if absent.
-        default_display: Default branch display id from the API.
-
-    Returns:
-        Dictionary matching the DESIGN output fields.
-    """
+    """Assemble one output row combining API metadata and optional file content."""
     apm_code: str | None = None
     yaml_branch: str | None = None
     if file_bytes is not None:
@@ -68,6 +66,85 @@ def mapping_row(
     }
 
 
+def _mapping_row_for_repository(
+    client: BitbucketServerClient,
+    *,
+    project_key: str,
+    project_name: str,
+    repo_slug: str,
+    repo: dict[str, Any],
+    file_path: str,
+) -> dict[str, Any]:
+    """Build one discovery row for a repository JSON object from the Bitbucket API."""
+    name = repo.get("name")
+    repo_name = name if isinstance(name, str) and name.strip() else repo_slug
+
+    if not repository_has_default_branch(repo):
+        return mapping_row(
+            project_key=project_key,
+            project_name=project_name,
+            repo_slug=repo_slug,
+            repo_name=repo_name,
+            file_bytes=None,
+            default_display="master",
+            is_empty=True,
+            last_committer_name=None,
+            last_committer_email=None,
+        )
+
+    at_ref, default_display = default_branch_tuple(repo)
+    latest_commit = client.repository_latest_commit(project_key, repo_slug)
+    is_empty = latest_commit is None
+    committer_name: str | None = None
+    committer_email: str | None = None
+    if latest_commit is not None:
+        committer_name, committer_email = parse_committer_identity(latest_commit)
+    raw = None
+    if not is_empty:
+        raw = client.fetch_raw_file(project_key, repo_slug, file_path, at_ref)
+    return mapping_row(
+        project_key=project_key,
+        project_name=project_name,
+        repo_slug=repo_slug,
+        repo_name=repo_name,
+        file_bytes=raw,
+        default_display=default_display,
+        is_empty=is_empty,
+        last_committer_name=committer_name,
+        last_committer_email=committer_email,
+    )
+
+
+def iter_mapping_for_repos(
+    client: BitbucketServerClient,
+    file_path: str,
+    repo_targets: Iterable[tuple[str, str]],
+    *,
+    completed_keys: set[tuple[str, str]],
+    max_repos: int | None = None,
+) -> Iterator[dict[str, Any]]:
+    """Yield mapping rows for explicit ``(project_key, repo_slug)`` pairs."""
+    new_count = 0
+    for project_key, repo_slug in repo_targets:
+        key = (project_key, repo_slug)
+        if key in completed_keys:
+            continue
+        if max_repos is not None and new_count >= max_repos:
+            return
+        repo = client.get_repository(project_key, repo_slug)
+        project_name = _project_name_from_repo(repo, project_key)
+        row = _mapping_row_for_repository(
+            client,
+            project_key=project_key,
+            project_name=project_name,
+            repo_slug=repo_slug,
+            repo=repo,
+            file_path=file_path,
+        )
+        new_count += 1
+        yield row
+
+
 def iter_mapping(
     client: BitbucketServerClient,
     file_path: str,
@@ -75,18 +152,7 @@ def iter_mapping(
     completed_keys: set[tuple[str, str]],
     max_repos: int | None = None,
 ) -> Iterator[dict[str, Any]]:
-    """Enumerate repositories and yield mapping rows, skipping completed keys.
-
-    Repository pairs listed in ``completed_keys`` are not fetched again (resume).
-    When ``max_repos`` is set, stop after that many **new** repositories are
-    processed in this run.
-
-    Args:
-        client: Bitbucket API client.
-        file_path: Path to the YAML file inside each repository.
-        completed_keys: ``(project_key, repo_slug)`` pairs already persisted.
-        max_repos: Optional cap on new repositories processed in this invocation.
-    """
+    """Enumerate repositories and yield mapping rows, skipping completed keys."""
     new_count = 0
     for project in client.iter_projects():
         pkey = project.get("key")
@@ -95,7 +161,6 @@ def iter_mapping(
             continue
         for repo in client.iter_repositories(pkey):
             slug = repo.get("slug")
-            name = repo.get("name")
             if not isinstance(slug, str):
                 continue
             key = (pkey, slug)
@@ -103,27 +168,13 @@ def iter_mapping(
                 continue
             if max_repos is not None and new_count >= max_repos:
                 return
-            repo_name = name if isinstance(name, str) else slug
-            at_ref, default_display = default_branch_tuple(repo)
-            latest_commit = client.repository_latest_commit(pkey, slug)
-            is_empty = latest_commit is None
-            committer_name: str | None = None
-            committer_email: str | None = None
-            if latest_commit is not None:
-                committer_name, committer_email = parse_committer_identity(latest_commit)
-            raw = None
-            if not is_empty:
-                raw = client.fetch_raw_file(pkey, slug, file_path, at_ref)
-            row = mapping_row(
+            row = _mapping_row_for_repository(
+                client,
                 project_key=pkey,
                 project_name=pname,
                 repo_slug=slug,
-                repo_name=repo_name,
-                file_bytes=raw,
-                default_display=default_display,
-                is_empty=is_empty,
-                last_committer_name=committer_name,
-                last_committer_email=committer_email,
+                repo=repo,
+                file_path=file_path,
             )
             new_count += 1
             yield row

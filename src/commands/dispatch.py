@@ -21,7 +21,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "Usage: python main.py <command> [options...]\n\n"
             "Snyk onboarding (run in order):\n"
             "  discover bitbucket       Stage 1 — Bitbucket Server → discovery.json\n"
-            "  discover spreadsheet     Stage 1 — .xlsx → discovery.json\n"
+            "  discover spreadsheet     Stage 1 — bb-repo-mapping.xlsx + Bitbucket → discovery.json\n"
             "  snyk-orgs                Stage 2 — discovery.json → snyk-orgs.json\n"
             "  snyk-broker-plan         Stage 2.1 — Broker Plan → broker-org-plan.json\n"
             "  snyk-broker-apply        Stage 2.2 — Broker Apply → broker integrations (POST)\n"
@@ -36,7 +36,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(
                 "Usage: python main.py discover {bitbucket|spreadsheet} [options...]\n"
                 "  discover bitbucket      — same flags as before (see --help)\n"
-                "  discover spreadsheet    — same flags as before (see --help)",
+                "  discover spreadsheet    — -i bb-repo-mapping.xlsx; requires BITBUCKET_* (see --help)",
                 file=sys.stderr,
             )
             return 0 if rest and rest[0] in ("-h", "--help") else 2

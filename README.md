@@ -73,7 +73,7 @@ After `pip install -e .`, the same flows are available as `repo-mapper-discover-
 
 - **Python 3.12+** (see `pyproject.toml`).
 - **Stage 1 (Bitbucket):** HTTPS reachability to Bitbucket Server and a PAT that can list projects/repos and read file content.
-- **Stage 1 (spreadsheet):** An `.xlsx` only; no Bitbucket.
+- **Stage 1 (spreadsheet):** `bb-repo-mapping.xlsx` plus the same `BITBUCKET_*` settings as Bitbucket discovery.
 - **Stage 2:** Paths only; no API tokens. You may pass **`--group-id`** / **`--template-org-id`** on the CLI to embed those UUIDs in `snyk-orgs.json` (still no HTTP).
 - **Stages 2.1–2.2 (Broker):** `SNYK_TOKEN`, `SNYK_TENANT_ID`, `SNYK_BROKER_INSTALL_ID`; `SNYK_GROUP_ID` recommended for org name → UUID resolution.
 - **Stage 3:** Snyk REST credentials (`SNYK_TOKEN`, `SNYK_GROUP_ID`); optional `--snyk-orgs` for a consistency check.
@@ -96,7 +96,7 @@ pip install -e ".[dev]"
 
 **Bitbucket** walks projects and repositories, checks each repo for commits (zero commits → `is_empty: true`), records **`last_committer_name`** and **`last_committer_email`** from the latest commit when not empty (API `committer`, falling back to `author`), reads a YAML file from non-empty repos (see [YAML format](#yaml-file-format)), merges AppSec fields with API metadata, and either prints a JSON **array of rows** to stdout or writes **discovery JSON** with `-o` / `--output`. With `-o`, also writes **`bitbucket-empty-repos.json`** by default listing empty repositories (override with `--empty-repos-output`; disable with `--no-empty-repos-output`).
 
-**Spreadsheet** maps columns A/B/D into the same row shape (see [Stage 1 (spreadsheet)](#stage-1-spreadsheet)) and writes the same discovery format with `-o`.
+**Spreadsheet** reads `bb-repo-mapping.xlsx` (project keys + semicolon-delimited repo slugs), queries Bitbucket per repo for YAML-derived APM and full row metadata (see [Stage 1 (spreadsheet)](#stage-1-spreadsheet)), and writes discovery JSON with `source: bitbucket`.
 
 Discovery is the handoff artifact for Stages 2 and 3. Shape: `version`, `source` (`bitbucket` or `spreadsheet`), `rows`, and optional `checkpoint` for resume (Bitbucket file output). Legacy **primary mapping** files (wrapper without `source`, or a bare array) are still accepted as `--discovery` input in Stages 2–3; `source` is treated as `bitbucket` for compatibility.
 
@@ -114,7 +114,7 @@ Reads `broker-org-plan.json` and **POST**s org–connection integrations for eac
 
 ### Stage 3 — `snyk-import`
 
-Reads `--discovery`, builds import targets (skips rows with **`is_empty: true`**), then calls the **Snyk REST API** to resolve `orgId` and `integrationId`. Optional `--snyk-orgs` cross-checks that org names cover the APM codes needed by the import. Optional **`--default-org-id`** routes targets from Bitbucket projects with no `apm_code` into one org; their `target.name` is **`{projectKey}/{repository_name}`** (repository slug when display name is absent) so repos with the same name in different projects stay unique. **No Bitbucket HTTP** in this stage.
+Reads `--discovery`, builds import targets (skips rows with **`is_empty: true`**), then calls the **Snyk REST API** to resolve `orgId` and `integrationId`. Optional **`--repos-per-batch N`** writes multiple import files (`snyk-import-001.json`, …) with at most **N** targets each for the API Import Tool. Optional `--snyk-orgs` cross-checks that org names cover the APM codes needed by the import. Optional **`--default-org-id`** routes targets from Bitbucket projects with no `apm_code` into one org; their `target.name` is **`{projectKey}/{repository_name}`** (repository slug when display name is absent) so repos with the same name in different projects stay unique. **No Bitbucket HTTP** in this stage.
 
 ## Configuration by stage
 
@@ -136,11 +136,12 @@ Reads `--discovery`, builds import targets (skips rows with **`is_empty: true`**
 
 ### Stage 1 (spreadsheet)
 
-No `BITBUCKET_*` variables.
+Uses the same **`BITBUCKET_*`** variables as Bitbucket discovery (see above), including `--empty-repos-output`, `--max-repos`, and `--flush-interval` when writing `-o`.
 
-- **Columns:** **A** = APM code, **B** = repository selector (`BB::<project_key>::<repo_slug>`), **D** = display name. **C**, **E**, **F** ignored.
-- **Filter:** Only rows whose **B** starts with **`BB::`** are imported; other prefixes (e.g. **`PG::`**) are skipped.
-- **Offline fields:** `production_branch` is empty; `bitbucket_project_name` is the parsed project key from **B**.
+- **Format:** Row 1 headers **`ProjectKey`** / **`RepoName`**. Column **A** = Bitbucket project key; column **B** = semicolon-delimited repository slugs (e.g. `repo-a;repo-b`).
+- **APM:** Read from each repo’s AppSec YAML via Bitbucket (not from the spreadsheet).
+- **Empty repos:** Zero commits, or **no default branch** in Bitbucket metadata → `is_empty: true` (skipped in Stage 3).
+- **Synthetic default branch ref** (when normalizing API metadata only): **`master`**, not `main`.
 
 ### Stage 2
 
@@ -189,9 +190,9 @@ If you omit `--env-file`, the CLI loads `.env` from the **current working direct
 | Command | Purpose | Key flags |
 |---------|---------|-----------|
 | `discover bitbucket` | Bitbucket → discovery or stdout rows | `-o`, `--empty-repos-output`, `--no-empty-repos-output`, `--env-file`, `--max-repos`, `--flush-interval` |
-| `discover spreadsheet` | `.xlsx` → discovery or stdout rows | `-i` / `--input`, `-o` |
+| `discover spreadsheet` | `bb-repo-mapping.xlsx` + Bitbucket → discovery | `-i`, `-o`, `--env-file`, `--max-repos`, `--flush-interval`, empty-repos flags |
 | `snyk-orgs` | discovery → `snyk-orgs.json` | `--discovery`, `--output`, `--group-id`, `--template-org-id`, `--dry-run` |
-| `snyk-import` | discovery → `snyk-import.json` + Snyk IDs | `--discovery`, `--output`, `--snyk-orgs` (optional), `--default-org-id` (optional), `--env-file`, `--dry-run` |
+| `snyk-import` | discovery → `snyk-import.json` + Snyk IDs | `--discovery`, `--output`, `--repos-per-batch` (optional), `--snyk-orgs`, `--default-org-id`, `--env-file`, `--dry-run` |
 
 ```bash
 PYTHONPATH=src python src/main.py -h
@@ -323,12 +324,23 @@ Print rows only (no resume file):
 PYTHONPATH=src python src/main.py discover bitbucket > rows.json
 ```
 
-Spreadsheet to discovery:
+Spreadsheet-driven discovery (requires `BITBUCKET_*` in `.env`):
 
 ```bash
 PYTHONPATH=src python src/main.py discover spreadsheet \
-  --input "data/AppSec Repo to APM - Sample.xlsx" \
-  -o discovery.json
+  -i data/bb-repo-mapping.xlsx \
+  -o discovery.json \
+  --env-file .env
+```
+
+Batched import (250 targets, 100 per file → three JSON files):
+
+```bash
+PYTHONPATH=src python src/main.py snyk-import \
+  --discovery discovery.json \
+  --output snyk-import.json \
+  --repos-per-batch 100 \
+  --env-file .env
 ```
 
 **Exit codes:** `0` success, `1` runtime error (e.g. API failure), `2` configuration / usage / validation error.

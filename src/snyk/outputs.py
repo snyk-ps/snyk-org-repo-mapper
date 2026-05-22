@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+from pathlib import Path
 from typing import Any
 
 from common.mapper import row_is_empty
@@ -112,6 +114,33 @@ def build_snyk_import_document(
             }
         )
     return {"targets": targets}
+
+
+def batch_import_output_paths(output: Path, num_batches: int) -> list[Path]:
+    """Return numbered output paths for batched import JSON files."""
+    if num_batches < 1:
+        return []
+    stem = output.stem or "snyk-import"
+    suffix = output.suffix or ".json"
+    parent = output.parent if str(output.parent) else Path(".")
+    return [parent / f"{stem}-{index:03d}{suffix}" for index in range(1, num_batches + 1)]
+
+
+def split_import_targets(
+    targets: list[dict[str, Any]],
+    repos_per_batch: int,
+) -> list[list[dict[str, Any]]]:
+    """Split import targets into contiguous batches of at most ``repos_per_batch``."""
+    if repos_per_batch < 1:
+        msg = "repos_per_batch must be >= 1"
+        raise ValueError(msg)
+    if not targets:
+        return []
+    num_batches = math.ceil(len(targets) / repos_per_batch)
+    return [
+        targets[i * repos_per_batch : (i + 1) * repos_per_batch]
+        for i in range(num_batches)
+    ]
 
 
 def apm_codes_from_rows(rows: list[dict[str, Any]]) -> set[str]:

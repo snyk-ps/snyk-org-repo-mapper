@@ -141,6 +141,19 @@ def test_build_snyk_import_document_skips_empty_rows() -> None:
     assert doc["targets"][0]["target"]["repoSlug"] == "active"
 
 
+def test_split_import_targets_batches() -> None:
+    from pathlib import Path
+
+    from snyk.outputs import batch_import_output_paths, split_import_targets
+
+    targets = [{"target": {"repoSlug": f"r{i}"}} for i in range(250)]
+    batches = split_import_targets(targets, 100)
+    assert [len(b) for b in batches] == [100, 100, 50]
+    paths = batch_import_output_paths(Path("out/snyk-import.json"), 3)
+    assert paths[0].name == "snyk-import-001.json"
+    assert paths[2].name == "snyk-import-003.json"
+
+
 def test_build_snyk_import_document_includes_legacy_rows_without_is_empty() -> None:
     rows = [
         {

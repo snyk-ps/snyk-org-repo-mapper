@@ -40,6 +40,23 @@ def parse_committer_identity(commit: dict[str, Any]) -> tuple[str | None, str | 
     return _person_identity(commit.get("author"))
 
 
+def repository_has_default_branch(repo: dict[str, Any]) -> bool:
+    """Return whether the repository has a usable default branch in API metadata."""
+    ref = repo.get("defaultBranch")
+    if ref is None:
+        return False
+    if isinstance(ref, str) and ref.strip():
+        return True
+    if isinstance(ref, dict):
+        ref_id = ref.get("id")
+        display = ref.get("displayId")
+        if isinstance(ref_id, str) and ref_id.strip():
+            return True
+        if isinstance(display, str) and display.strip():
+            return True
+    return False
+
+
 def default_branch_tuple(repo: dict[str, Any]) -> tuple[str, str]:
     """Return ``(at_ref, display_id)`` for the repository default branch.
 
@@ -54,7 +71,7 @@ def default_branch_tuple(repo: dict[str, Any]) -> tuple[str, str]:
     """
     ref = repo.get("defaultBranch")
     if ref is None:
-        return "refs/heads/main", "main"
+        return "refs/heads/master", "master"
     if isinstance(ref, str):
         display = ref.rsplit("/", maxsplit=1)[-1] if "/" in ref else ref
         if ref.startswith("refs/"):
@@ -68,7 +85,7 @@ def default_branch_tuple(repo: dict[str, Any]) -> tuple[str, str]:
             return ref_id, disp
         if isinstance(display, str) and display:
             return f"refs/heads/{display}", display
-    return "refs/heads/main", "main"
+    return "refs/heads/master", "master"
 
 
 def _is_retriable_request_failure(exc: BaseException) -> bool:
@@ -178,6 +195,67 @@ class BitbucketServerClient:
             if not isinstance(next_start, int):
                 break
             start = next_start
+
+    def get_repository(self, project_key: str, repo_slug: str) -> dict[str, Any]:
+        """Return repository metadata for a single repo.
+
+        Raises:
+            ValueError: If the repository does not exist (HTTP 404).
+            RuntimeError: On other HTTP or network failures.
+        """
+        pk = quote(project_key, safe="")
+        slug = quote(repo_slug, safe="")
+        path = f"rest/api/1.0/projects/{pk}/repos/{slug}"
+        url = urljoin(self._base, path.lstrip("/"))
+        req = Request(
+            url,
+            headers={
+                "Authorization": f"Bearer {self._token}",
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            },
+            method="GET",
+        )
+
+        def inner() -> dict[str, Any]:
+            try:
+                with urlopen(req, timeout=self._timeout) as resp:
+                    body = resp.read()
+            except HTTPError as exc:
+                if exc.code == 404:
+                    msg = f"Repository not found: {project_key}/{repo_slug}"
+                    raise ValueError(msg) from exc
+                if not _is_retriable_request_failure(exc):
+                    msg = f"HTTP {exc.code} requesting Bitbucket API"
+                    raise RuntimeError(msg) from exc
+                raise
+            except (URLError, TimeoutError, RemoteDisconnected):
+                raise
+            try:
+                parsed = json.loads(body.decode("utf-8"))
+            except json.JSONDecodeError as exc:
+                msg = "Invalid JSON from Bitbucket API"
+                raise RuntimeError(msg) from exc
+            if not isinstance(parsed, dict):
+                msg = "Unexpected Bitbucket API response shape"
+                raise RuntimeError(msg)
+            return parsed
+
+        try:
+            return run_with_retries(
+                inner,
+                max_attempts=self._http_max_attempts,
+                base_backoff_s=self._http_backoff_seconds,
+                retry=_is_retriable_request_failure,
+            )
+        except ValueError:
+            raise
+        except HTTPError as exc:
+            msg = f"HTTP {exc.code} requesting Bitbucket API"
+            raise RuntimeError(msg) from exc
+        except (URLError, TimeoutError, RemoteDisconnected) as exc:
+            msg = "Network error calling Bitbucket API"
+            raise RuntimeError(msg) from exc
 
     def repository_latest_commit(
         self,

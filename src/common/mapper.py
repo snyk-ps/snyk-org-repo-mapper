@@ -8,8 +8,8 @@ from typing import Any
 from common.appsec_yaml import parse_appsec_yaml, resolve_production_branch
 from integrations.bitbucket import (
     BitbucketServerClient,
-    default_branch_tuple,
-    repository_has_default_branch,
+    DEFAULT_BRANCH_EMPTY_REPO,
+    resolve_repository_branch,
 )
 from integrations.bitbucket.client import parse_committer_identity
 
@@ -66,6 +66,26 @@ def mapping_row(
     }
 
 
+def _empty_mapping_row(
+    *,
+    project_key: str,
+    project_name: str,
+    repo_slug: str,
+    repo_name: str,
+) -> dict[str, Any]:
+    return mapping_row(
+        project_key=project_key,
+        project_name=project_name,
+        repo_slug=repo_slug,
+        repo_name=repo_name,
+        file_bytes=None,
+        default_display="master",
+        is_empty=True,
+        last_committer_name=None,
+        last_committer_email=None,
+    )
+
+
 def _mapping_row_for_repository(
     client: BitbucketServerClient,
     *,
@@ -79,29 +99,42 @@ def _mapping_row_for_repository(
     name = repo.get("name")
     repo_name = name if isinstance(name, str) and name.strip() else repo_slug
 
-    if not repository_has_default_branch(repo):
-        return mapping_row(
+    branch = resolve_repository_branch(client, repo, project_key, repo_slug)
+    if branch is DEFAULT_BRANCH_EMPTY_REPO:
+        return _empty_mapping_row(
             project_key=project_key,
             project_name=project_name,
             repo_slug=repo_slug,
             repo_name=repo_name,
-            file_bytes=None,
-            default_display="master",
-            is_empty=True,
-            last_committer_name=None,
-            last_committer_email=None,
         )
 
-    at_ref, default_display = default_branch_tuple(repo)
+    at_ref: str | None
+    default_display: str | None
+    if branch is not None:
+        at_ref, default_display = branch
+    else:
+        at_ref = None
+        default_display = None
+
     latest_commit = client.repository_latest_commit(project_key, repo_slug)
     is_empty = latest_commit is None
     committer_name: str | None = None
     committer_email: str | None = None
     if latest_commit is not None:
         committer_name, committer_email = parse_committer_identity(latest_commit)
-    raw = None
-    if not is_empty:
-        raw = client.fetch_raw_file(project_key, repo_slug, file_path, at_ref)
+
+    if is_empty:
+        return _empty_mapping_row(
+            project_key=project_key,
+            project_name=project_name,
+            repo_slug=repo_slug,
+            repo_name=repo_name,
+        )
+
+    if at_ref is None:
+        at_ref, default_display = "refs/heads/master", "master"
+
+    raw = client.fetch_raw_file(project_key, repo_slug, file_path, at_ref)
     return mapping_row(
         project_key=project_key,
         project_name=project_name,

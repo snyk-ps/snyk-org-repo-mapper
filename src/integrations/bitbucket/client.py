@@ -44,7 +44,7 @@ def repository_has_default_branch(repo: dict[str, Any]) -> bool:
     """Return whether ``repo.defaultBranch`` on a repository object is usable.
 
     Gate 1 in discovery: only inspects the repository list/GET payload. When
-    this returns false, callers should try ``GET .../default-branch`` before
+    this returns false, callers should try ``GET .../branches/default`` before
     treating the repository as having no default branch.
     """
     ref = repo.get("defaultBranch")
@@ -66,9 +66,9 @@ def default_branch_tuple(repo: dict[str, Any]) -> tuple[str, str]:
     """Return ``(at_ref, display_id)`` for the repository default branch.
 
     Gate 3 in discovery: normalizes ``defaultBranch`` on a repository object (or
-    a synthetic ``{"defaultBranch": branch_object}`` from the default-branch API).
+    a synthetic ``{"defaultBranch": branch_object}`` from the branches/default API).
     When shape is unrecognized, falls back to ``refs/heads/master`` / ``master``.
-    This fallback is only reached when Gate 1 passed or the default-branch API
+    This fallback is only reached when Gate 1 passed or the branches/default API
     returned a branch object.
     """
     ref = repo.get("defaultBranch")
@@ -90,13 +90,43 @@ def default_branch_tuple(repo: dict[str, Any]) -> tuple[str, str]:
     return "refs/heads/master", "master"
 
 
-# Sentinel: Bitbucket returned 204 No Content for default-branch (empty repository).
+# Sentinel: Bitbucket returned 204/404 with no default branch (empty or unset repository).
 DEFAULT_BRANCH_EMPTY_REPO = object()
 
 
 def default_branch_tuple_from_branch_object(branch: dict[str, Any]) -> tuple[str, str]:
-    """Normalize a branch object from the default-branch API to ``(at_ref, display)``."""
+    """Normalize a branch object from the branches/default API to ``(at_ref, display)``."""
     return default_branch_tuple({"defaultBranch": branch})
+
+
+def _read_http_error_json(exc: HTTPError) -> dict[str, Any] | None:
+    """Parse a Bitbucket error response body from an :class:`HTTPError`."""
+    try:
+        parsed = json.loads(exc.read().decode("utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _http_error_is_no_default_branch(exc: HTTPError) -> bool:
+    """Return whether ``exc`` is Bitbucket's no-default-branch error (HTTP 404)."""
+    payload = _read_http_error_json(exc)
+    if payload is None:
+        return False
+    errors = payload.get("errors")
+    if not isinstance(errors, list):
+        return False
+    for err in errors:
+        if not isinstance(err, dict):
+            continue
+        if err.get("exceptionName") == (
+            "com.atlassian.bitbucket.repository.NoDefaultBranchException"
+        ):
+            return True
+        message = err.get("message")
+        if isinstance(message, str) and "no default branch" in message.lower():
+            return True
+    return False
 
 
 def _is_retriable_request_failure(exc: BaseException) -> bool:
@@ -122,9 +152,10 @@ def resolve_repository_branch(
     Resolution order (see tests in ``test_bitbucket_helpers.py`` for matrix):
 
     1. ``repository_has_default_branch(repo)`` → ``default_branch_tuple(repo)``
-    2. ``GET .../default-branch`` → branch object normalized like ``defaultBranch``
-    3. ``DEFAULT_BRANCH_EMPTY_REPO`` when the API returns 204 (empty repository)
-    4. ``None`` when the API returns 404 (configured ref not created); mapper may
+    2. ``GET .../branches/default`` → branch object normalized like ``defaultBranch``
+    3. ``DEFAULT_BRANCH_EMPTY_REPO`` when the API returns 204, or 404 with
+       ``NoDefaultBranchException`` (no default branch defined)
+    4. ``None`` for other 404 responses (configured ref not created); mapper may
        fall back to synthetic ``master`` when commits exist
     """
     if repository_has_default_branch(repo):
@@ -303,12 +334,13 @@ class BitbucketServerClient:
 
         Returns:
             Branch object (``id``, ``displayId``) on HTTP 200.
-            ``DEFAULT_BRANCH_EMPTY_REPO`` on HTTP 204 (empty repository).
-            ``None`` on HTTP 404 (configured branch ref not created).
+            ``DEFAULT_BRANCH_EMPTY_REPO`` on HTTP 204, or HTTP 404 when no default
+            branch is defined (``NoDefaultBranchException``).
+            ``None`` on other HTTP 404 responses (configured branch ref not created).
         """
         pk = quote(project_key, safe="")
         slug = quote(repo_slug, safe="")
-        path = f"rest/api/1.0/projects/{pk}/repos/{slug}/default-branch"
+        path = f"rest/api/1.0/projects/{pk}/repos/{slug}/branches/default"
         url = urljoin(self._base, path.lstrip("/"))
         req = Request(
             url,
@@ -328,6 +360,8 @@ class BitbucketServerClient:
                     body = resp.read()
             except HTTPError as exc:
                 if exc.code == 404:
+                    if _http_error_is_no_default_branch(exc):
+                        return DEFAULT_BRANCH_EMPTY_REPO
                     return None
                 if exc.code == 204:
                     return DEFAULT_BRANCH_EMPTY_REPO
@@ -342,10 +376,10 @@ class BitbucketServerClient:
             try:
                 parsed = json.loads(body.decode("utf-8"))
             except json.JSONDecodeError as exc:
-                msg = "Invalid JSON from Bitbucket default-branch API"
+                msg = "Invalid JSON from Bitbucket branches/default API"
                 raise RuntimeError(msg) from exc
             if not isinstance(parsed, dict):
-                msg = "Unexpected Bitbucket default-branch API response shape"
+                msg = "Unexpected Bitbucket branches/default API response shape"
                 raise RuntimeError(msg)
             return parsed
 
@@ -358,13 +392,15 @@ class BitbucketServerClient:
             )
         except HTTPError as exc:
             if exc.code == 404:
+                if _http_error_is_no_default_branch(exc):
+                    return DEFAULT_BRANCH_EMPTY_REPO
                 return None
             if exc.code == 204:
                 return DEFAULT_BRANCH_EMPTY_REPO
             msg = f"HTTP {exc.code} requesting Bitbucket default branch"
             raise RuntimeError(msg) from exc
         except (URLError, TimeoutError, RemoteDisconnected) as exc:
-            msg = "Network error calling Bitbucket default-branch API"
+            msg = "Network error calling Bitbucket branches/default API"
             raise RuntimeError(msg) from exc
 
     def repository_latest_commit(

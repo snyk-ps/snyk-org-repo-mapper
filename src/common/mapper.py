@@ -5,7 +5,11 @@ from __future__ import annotations
 from collections.abc import Iterable, Iterator
 from typing import Any
 
-from common.appsec_yaml import parse_appsec_yaml, resolve_production_branch
+from common.appsec_yaml import (
+    parse_appsec_yaml,
+    resolve_production_branch,
+    warn_if_apm_code_unconventional,
+)
 from integrations.bitbucket import (
     BitbucketServerClient,
     DEFAULT_BRANCH_EMPTY_REPO,
@@ -55,6 +59,8 @@ def mapping_row(
 
     production_branch = resolve_production_branch(yaml_branch, default_display)
     repository_path = f"{project_key}/{repo_slug}"
+    if apm_code is not None:
+        warn_if_apm_code_unconventional(apm_code, repository_path=repository_path)
     return {
         "apm_code": apm_code,
         "repository_path": repository_path,

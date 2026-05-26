@@ -1,5 +1,7 @@
 """Tests for mapping row assembly."""
 
+import logging
+
 from common.mapper import (
     collect_mapping,
     iter_mapping,
@@ -214,6 +216,23 @@ def test_iter_mapping_for_repos_from_sheet() -> None:
     assert rows[0]["apm_code"] == "Z9"
     assert rows[0]["last_committer_name"] == "a"
     assert rows[0]["last_commit_date"] == "2024-01-01T00:00:00+00:00"
+
+
+def test_mapping_row_warns_on_unconventional_apm_code(caplog) -> None:
+    body = b"security:\n  apmCode: A1\n"
+    with caplog.at_level(logging.WARNING):
+        row = mapping_row(
+            project_key="PRJ",
+            project_name="Project",
+            repo_slug="svc",
+            repo_name="svc",
+            file_bytes=body,
+            default_display="main",
+            is_empty=False,
+        )
+    assert row["apm_code"] == "A1"
+    assert "A1" in caplog.text
+    assert "PRJ/svc" in caplog.text
 
 
 def test_row_is_empty_strict() -> None:

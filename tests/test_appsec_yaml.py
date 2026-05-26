@@ -1,8 +1,12 @@
 """Tests for AppSec YAML parsing and branch resolution."""
 
+import logging
+
 from common.appsec_yaml import (
+    apm_code_matches_convention,
     parse_appsec_yaml,
     resolve_production_branch,
+    warn_if_apm_code_unconventional,
 )
 
 
@@ -52,3 +56,25 @@ def test_resolve_production_branch_falls_back_to_default() -> None:
     assert resolve_production_branch(None, "main") == "main"
     assert resolve_production_branch("", "main") == "main"
     assert resolve_production_branch("   ", "stable") == "stable"
+
+
+def test_apm_code_matches_convention() -> None:
+    assert apm_code_matches_convention("ABC1") is True
+    assert apm_code_matches_convention("XYZ9") is True
+    assert apm_code_matches_convention("A1") is False
+    assert apm_code_matches_convention("abc1") is False
+    assert apm_code_matches_convention("ABC12") is False
+    assert apm_code_matches_convention("AB-1") is False
+
+
+def test_warn_if_apm_code_unconventional(caplog) -> None:
+    with caplog.at_level(logging.WARNING):
+        warn_if_apm_code_unconventional("apm1", repository_path="PRJ/repo")
+    assert "apm1" in caplog.text
+    assert "PRJ/repo" in caplog.text
+
+
+def test_warn_if_apm_code_unconventional_skips_valid(caplog) -> None:
+    with caplog.at_level(logging.WARNING):
+        warn_if_apm_code_unconventional("ABC1", repository_path="PRJ/repo")
+    assert caplog.text == ""

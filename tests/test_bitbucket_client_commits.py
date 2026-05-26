@@ -11,6 +11,7 @@ from integrations.bitbucket.client import (
     BitbucketServerClient,
     DEFAULT_BRANCH_EMPTY_REPO,
     parse_committer_identity,
+    parse_commit_timestamp,
 )
 
 
@@ -60,6 +61,29 @@ def test_parse_committer_identity_author_fallback() -> None:
 def test_parse_committer_identity_missing_returns_none() -> None:
     assert parse_committer_identity({}) == (None, None)
     assert parse_committer_identity({"committer": {}, "author": {}}) == (None, None)
+
+
+def test_parse_commit_timestamp_from_committer() -> None:
+    commit = {"committerTimestamp": 1_704_067_200_000}
+    assert parse_commit_timestamp(commit) == "2024-01-01T00:00:00+00:00"
+
+
+def test_parse_commit_timestamp_author_fallback() -> None:
+    commit = {"authorTimestamp": 1_704_067_200_000}
+    assert parse_commit_timestamp(commit) == "2024-01-01T00:00:00+00:00"
+
+
+def test_parse_commit_timestamp_prefers_committer() -> None:
+    commit = {
+        "committerTimestamp": 1_704_067_200_000,
+        "authorTimestamp": 1_600_000_000_000,
+    }
+    assert parse_commit_timestamp(commit) == "2024-01-01T00:00:00+00:00"
+
+
+def test_parse_commit_timestamp_missing_returns_none() -> None:
+    assert parse_commit_timestamp({}) is None
+    assert parse_commit_timestamp({"committerTimestamp": -1}) is None
 
 
 def test_get_repository_returns_payload() -> None:

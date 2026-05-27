@@ -114,7 +114,7 @@ Reads `broker-org-plan.json` and **POST**s org–connection integrations for eac
 
 ### Stage 3 — `snyk-import`
 
-Reads `--discovery`, builds import targets (skips rows with **`is_empty: true`**), then calls the **Snyk REST API** to resolve `orgId` and `integrationId`. Optional **`--repos-per-batch N`** writes multiple import files (`snyk-import-001.json`, …) with at most **N** targets each for the API Import Tool. Optional `--snyk-orgs` cross-checks that org names cover the APM codes needed by the import. Optional **`--default-org-id`** routes targets from Bitbucket projects with no `apm_code` into one org; their `target.name` is **`{projectKey}/{repository_name}`** (repository slug when display name is absent) so repos with the same name in different projects stay unique. **No Bitbucket HTTP** in this stage.
+Reads `--discovery`, builds import targets (skips rows with **`is_empty: true`**), then calls the **Snyk REST API** to resolve `orgId` and `integrationId` per repository using that row’s `apm_code` (Snyk org **name** = APM code). Repositories in the same Bitbucket project may have different APM codes. Optional **`--repos-per-batch N`** writes multiple import files (`snyk-import-001.json`, …) with at most **N** targets each for the API Import Tool. Optional `--snyk-orgs` cross-checks that org names cover the APM codes needed by the import. Optional **`--default-org-id`** routes targets whose discovery row has no `apm_code` into one org; their `target.name` is **`{projectKey}/{repository_name}`** (repository slug when display name is absent). Rows with an `apm_code` keep unprefixed display names even when siblings in the same project use the default org. **No Bitbucket HTTP** in this stage.
 
 ## Configuration by stage
 
@@ -179,7 +179,7 @@ Apply reads `tenant_id` and `install_id` from the plan file; orgs must exist in 
 
 | Flag | Description |
 |------|-------------|
-| `--default-org-id UUID` | Snyk org id for import targets whose Bitbucket project has no `apm_code`. Sets composite `target.name` = `{projectKey}/{repository_name}`. |
+| `--default-org-id UUID` | Snyk org id for import targets whose discovery row has no `apm_code` (null/empty). Sets composite `target.name` = `{projectKey}/{repository_name}` for those rows only. |
 
 ### Optional `.env`
 

@@ -11,7 +11,6 @@ from typing import Any, Sequence
 from common.discovery_document import load_rows_from_stage1_file
 from common.output_state import assert_safe_filesystem_path, atomic_write_json
 from snyk.outputs import apm_codes_from_rows, build_snyk_orgs_document
-from snyk.project_context import project_apm_map_from_rows
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -64,12 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
-    try:
-        rows, _src = load_rows_from_stage1_file(args.discovery)
-        project_apm_map_from_rows(rows)
-    except ValueError as exc:
-        print(str(exc), file=sys.stderr)
-        return 2
+    rows, _src = load_rows_from_stage1_file(args.discovery)
 
     group_id = (args.group_id.strip() if isinstance(args.group_id, str) else None) or None
     template_org_id = (

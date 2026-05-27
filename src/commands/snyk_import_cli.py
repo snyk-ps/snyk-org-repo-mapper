@@ -27,7 +27,7 @@ from snyk.outputs import (
     build_snyk_import_document,
     split_import_targets,
 )
-from snyk.project_context import project_apm_map_from_rows
+from snyk.project_context import repo_apm_map_from_rows
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -70,7 +70,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="UUID",
         help=(
             "Snyk organization id (UUID from the Snyk UI or API) used for import targets "
-            "whose Bitbucket project has no apm_code in discovery (all-null APM rows)."
+            "whose discovery row has no apm_code (null or empty YAML APM)."
         ),
     )
     parser.add_argument(
@@ -98,7 +98,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         rows, _src = load_rows_from_stage1_file(args.discovery)
-        project_apm = project_apm_map_from_rows(rows)
+        repo_apm = repo_apm_map_from_rows(rows)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2
@@ -106,13 +106,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     default_org: str | None = None
     if isinstance(args.default_org_id, str) and args.default_org_id.strip():
         default_org = args.default_org_id.strip()
-    import_doc = build_snyk_import_document(
-        rows,
-        project_apm=project_apm,
-        default_org_id=default_org,
-    )
+    import_doc = build_snyk_import_document(rows, default_org_id=default_org)
     required = required_apm_codes_for_import(
-        project_apm, import_doc, default_org_id=default_org
+        repo_apm, import_doc, default_org_id=default_org
     )
 
     orgs_doc = None
@@ -154,14 +150,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         org_to_integration = integration_cache_for_orgs(client, org_ids)
         new_doc = enrich_import_document(
             import_doc,
-            project_apm=project_apm,
+            repo_apm=repo_apm,
             name_to_org_id=name_to_id,
             org_to_integration_id=org_to_integration,
             default_org_id=default_org,
         )
         plan = summarize_enrichment_plan(
             import_doc,
-            project_apm,
+            repo_apm,
             name_to_id,
             org_to_integration,
             default_org_id=default_org,

@@ -27,7 +27,7 @@ def test_required_apm_codes() -> None:
             }
         ]
     }
-    assert required_apm_codes_for_import({"P1": "APM1"}, doc) == {"APM1"}
+    assert required_apm_codes_for_import({("P1", "r"): "APM1"}, doc) == {"APM1"}
 
 
 def test_required_apm_codes_skips_missing_project_when_default_org() -> None:
@@ -38,7 +38,7 @@ def test_required_apm_codes_skips_missing_project_when_default_org() -> None:
         ]
     }
     assert required_apm_codes_for_import(
-        {"P1": "APM1"}, doc, default_org_id="org-fallback-uuid"
+        {("P1", "a"): "APM1"}, doc, default_org_id="org-fallback-uuid"
     ) == {"APM1"}
 
 
@@ -60,7 +60,7 @@ def test_enrich_import_document_uses_default_org_when_no_apm() -> None:
     }
     out = enrich_import_document(
         import_doc,
-        project_apm={},
+        repo_apm={},
         name_to_org_id={},
         org_to_integration_id={"default-org-uuid": "int-uuid"},
         default_org_id="default-org-uuid",
@@ -106,6 +106,70 @@ def test_build_name_to_org_id_duplicate() -> None:
         )
 
 
+def test_enrich_import_document_two_apm_codes_same_project() -> None:
+    import_doc = {
+        "targets": [
+            {
+                "orgId": "******",
+                "integrationId": "******",
+                "target": {
+                    "projectKey": "ACCP",
+                    "repoSlug": "accelerator",
+                    "name": "accelerator",
+                    "branch": "",
+                },
+            },
+            {
+                "orgId": "******",
+                "integrationId": "******",
+                "target": {
+                    "projectKey": "ACCP",
+                    "repoSlug": "accelerator-build-engine",
+                    "name": "accelerator-build-engine",
+                    "branch": "",
+                },
+            },
+        ]
+    }
+    out = enrich_import_document(
+        import_doc,
+        repo_apm={
+            ("ACCP", "accelerator"): "ABCD",
+            ("ACCP", "accelerator-build-engine"): "ABCE",
+        },
+        name_to_org_id={"ABCD": "org-abcd", "ABCE": "org-abce"},
+        org_to_integration_id={"org-abcd": "int-abcd", "org-abce": "int-abce"},
+    )
+    assert out["targets"][0]["orgId"] == "org-abcd"
+    assert out["targets"][1]["orgId"] == "org-abce"
+
+
+def test_enrich_import_document_mixed_default_org_in_same_project() -> None:
+    import_doc = {
+        "targets": [
+            {
+                "orgId": "******",
+                "integrationId": "******",
+                "target": {"projectKey": "P1", "repoSlug": "a", "name": "a", "branch": ""},
+            },
+            {
+                "orgId": "******",
+                "integrationId": "******",
+                "target": {"projectKey": "P1", "repoSlug": "b", "name": "P1/b", "branch": ""},
+            },
+        ]
+    }
+    out = enrich_import_document(
+        import_doc,
+        repo_apm={("P1", "a"): "APM1"},
+        name_to_org_id={"APM1": "org-apm"},
+        org_to_integration_id={"org-apm": "int-apm", "default-org": "int-default"},
+        default_org_id="default-org",
+    )
+    assert out["targets"][0]["orgId"] == "org-apm"
+    assert out["targets"][1]["orgId"] == "default-org"
+
+
 def test_enrich_import_document() -> None:
     import_doc = {
         "targets": [
@@ -118,7 +182,7 @@ def test_enrich_import_document() -> None:
     }
     out = enrich_import_document(
         import_doc,
-        project_apm={"P1": "APM1"},
+        repo_apm={("P1", "r"): "APM1"},
         name_to_org_id={"APM1": "org-uuid"},
         org_to_integration_id={"org-uuid": "int-uuid"},
     )

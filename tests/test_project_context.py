@@ -1,41 +1,34 @@
-"""Tests for snyk-project-context derivation."""
+"""Tests for per-repository APM map derivation."""
 
 from __future__ import annotations
 
-import pytest
-
-from snyk.project_context import (
-    PROJECT_CONTEXT_FORMAT_VERSION,
-    build_project_context_document,
-    parse_project_context_document,
-    project_apm_map_from_rows,
-)
+from snyk.project_context import repo_apm_map_from_rows
 
 
-def test_project_apm_map_single_project() -> None:
+def test_repo_apm_map_single_project_same_code() -> None:
     rows = [
         {"repository_path": "P1/a", "apm_code": "A1"},
         {"repository_path": "P1/b", "apm_code": "A1"},
     ]
-    assert project_apm_map_from_rows(rows) == {"P1": "A1"}
+    assert repo_apm_map_from_rows(rows) == {("P1", "a"): "A1", ("P1", "b"): "A1"}
 
 
-def test_project_apm_map_conflict() -> None:
+def test_repo_apm_map_multi_apm_same_project() -> None:
     rows = [
-        {"repository_path": "P1/a", "apm_code": "X"},
-        {"repository_path": "P1/b", "apm_code": "Y"},
+        {"repository_path": "ACCP/accelerator", "apm_code": "ABCD"},
+        {"repository_path": "ACCP/accelerator-build-engine", "apm_code": "ABCE"},
+        {"repository_path": "ACCP/accelerator-jenkins-scripts", "apm_code": "ABCF"},
     ]
-    with pytest.raises(ValueError, match="Conflicting apm_code"):
-        project_apm_map_from_rows(rows)
+    assert repo_apm_map_from_rows(rows) == {
+        ("ACCP", "accelerator"): "ABCD",
+        ("ACCP", "accelerator-build-engine"): "ABCE",
+        ("ACCP", "accelerator-jenkins-scripts"): "ABCF",
+    }
 
 
-def test_build_and_parse_roundtrip() -> None:
-    rows = [{"repository_path": "Z/r", "apm_code": "CODE"}]
-    doc = build_project_context_document(rows)
-    assert doc["version"] == PROJECT_CONTEXT_FORMAT_VERSION
-    assert parse_project_context_document(doc) == {"Z": "CODE"}
-
-
-def test_parse_rejects_bad_version() -> None:
-    with pytest.raises(ValueError, match="Unsupported project context"):
-        parse_project_context_document({"version": 99, "projects": {}})
+def test_repo_apm_map_skips_null_apm() -> None:
+    rows = [
+        {"repository_path": "P1/a", "apm_code": None},
+        {"repository_path": "P1/b", "apm_code": "A1"},
+    ]
+    assert repo_apm_map_from_rows(rows) == {("P1", "b"): "A1"}

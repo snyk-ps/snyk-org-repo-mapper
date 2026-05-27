@@ -1,4 +1,4 @@
-"""Unified CLI dispatcher: discover → snyk-orgs → broker plan/apply → snyk-import."""
+"""Unified CLI dispatcher: discover → snyk-orgs → broker plan/apply/settings → snyk-import."""
 
 from __future__ import annotations
 
@@ -7,6 +7,9 @@ from typing import Sequence
 
 from commands.bitbucket_cli import main as bitbucket_main
 from commands.snyk_broker_apply_cli import main as snyk_broker_apply_main
+from commands.snyk_broker_integration_settings_cli import (
+    main as snyk_broker_integration_settings_main,
+)
 from commands.snyk_broker_plan_cli import main as snyk_broker_plan_main
 from commands.snyk_import_cli import main as snyk_import_main
 from commands.snyk_orgs_cli import main as snyk_orgs_main
@@ -14,7 +17,7 @@ from commands.spreadsheet_cli import main as spreadsheet_main
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Dispatch to pipeline stage CLIs (1, 2, 2.1, 2.2, 3)."""
+    """Dispatch to pipeline stage CLIs (1, 2, 2.1, 2.2, 2.3, 3)."""
     args = list(sys.argv[1:] if argv is None else argv)
     if not args or args[0] in ("-h", "--help"):
         print(
@@ -25,6 +28,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "  snyk-orgs                Stage 2 — discovery.json → snyk-orgs.json\n"
             "  snyk-broker-plan         Stage 2.1 — Broker Plan → broker-org-plan.json\n"
             "  snyk-broker-apply        Stage 2.2 — Broker Apply → broker integrations (POST)\n"
+            "  snyk-broker-integration-settings  Stage 2.3 — integration settings (PUT)\n"
             "  snyk-import              Stage 3 — discovery.json → snyk-import.json (Snyk API)\n",
             file=sys.stderr,
         )
@@ -56,6 +60,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if cmd == "snyk-broker-apply":
         return snyk_broker_apply_main(rest)
+
+    if cmd == "snyk-broker-integration-settings":
+        return snyk_broker_integration_settings_main(rest)
 
     if cmd == "snyk-import":
         return snyk_import_main(rest)
@@ -92,3 +99,8 @@ def main_snyk_broker_plan() -> int:
 def main_snyk_broker_apply() -> int:
     """Console script: ``repo-mapper-snyk-broker-apply``."""
     return main(["snyk-broker-apply"] + sys.argv[1:])
+
+
+def main_snyk_broker_integration_settings() -> int:
+    """Console script: ``repo-mapper-snyk-broker-integration-settings``."""
+    return main(["snyk-broker-integration-settings"] + sys.argv[1:])

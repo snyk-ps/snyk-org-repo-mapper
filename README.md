@@ -55,7 +55,20 @@ This project helps you onboard Bitbucket Server repositories into Snyk in **stag
      --output broker-org-apply-report.json
    ```
 
-5. **Stage 3 — import file + IDs** (Snyk API only):
+5. **Stage 2.3 — Integration settings** (optional; runs after Broker Apply):
+
+   ```bash
+   export SNYK_TOKEN='your-token'
+   export SNYK_INTEGRATIONS_API='v1'
+
+   PYTHONPATH=src python src/main.py snyk-broker-integration-settings \
+     --report broker-org-apply-report.json \
+     --output broker-integration-settings-report.json
+   ```
+
+   Applies a predefined Bitbucket Server SCM settings profile to each org listed under `applied` in the apply report. Requires **Integrations v1** API (`SNYK_INTEGRATIONS_API=v1`, the default).
+
+6. **Stage 3 — import file + IDs** (Snyk API only):
 
    ```bash
    export SNYK_TOKEN='your-token'
@@ -67,7 +80,7 @@ This project helps you onboard Bitbucket Server repositories into Snyk in **stag
      --snyk-orgs snyk-orgs.json
    ```
 
-After `pip install -e .`, the same flows are available as `repo-mapper-discover-bitbucket`, `repo-mapper-discover-spreadsheet`, `repo-mapper-snyk-orgs`, `repo-mapper-snyk-broker-plan`, `repo-mapper-snyk-broker-apply`, and `repo-mapper-snyk-import` on your `PATH`.
+After `pip install -e .`, the same flows are available as `repo-mapper-discover-bitbucket`, `repo-mapper-discover-spreadsheet`, `repo-mapper-snyk-orgs`, `repo-mapper-snyk-broker-plan`, `repo-mapper-snyk-broker-apply`, `repo-mapper-snyk-broker-integration-settings`, and `repo-mapper-snyk-import` on your `PATH`.
 
 ## Requirements
 
@@ -76,6 +89,7 @@ After `pip install -e .`, the same flows are available as `repo-mapper-discover-
 - **Stage 1 (spreadsheet):** `bb-repo-mapping.xlsx` plus the same `BITBUCKET_*` settings as Bitbucket discovery.
 - **Stage 2:** Paths only; no API tokens. You may pass **`--group-id`** / **`--template-org-id`** on the CLI to embed those UUIDs in `snyk-orgs.json` (still no HTTP).
 - **Stages 2.1–2.2 (Broker):** `SNYK_TOKEN`, `SNYK_TENANT_ID`, `SNYK_BROKER_INSTALL_ID`; `SNYK_GROUP_ID` recommended for org name → UUID resolution.
+- **Stage 2.3 (integration settings):** `SNYK_TOKEN`; `SNYK_INTEGRATIONS_API` must be `v1` (default). Token needs permission to edit integrations.
 - **Stage 3:** Snyk REST credentials (`SNYK_TOKEN`, `SNYK_GROUP_ID`); optional `--snyk-orgs` for a consistency check.
 
 ## Installation
@@ -111,6 +125,10 @@ Reads `snyk-orgs.json`, lists Universal Broker **deployments** and **connections
 ### Stage 2.2 — Broker Apply (`snyk-broker-apply`)
 
 Reads `broker-org-plan.json` and **POST**s org–connection integrations for each `assignments` entry (skips `already_integrated`). Writes **`broker-org-apply-report.json`**. Does **not** create deployments or connections. Orgs must already exist in Snyk; use `SNYK_GROUP_ID` when `org_id` is missing from the plan.
+
+### Stage 2.3 — Integration settings (`snyk-broker-integration-settings`)
+
+Reads **`broker-org-apply-report.json`**, processes each entry in **`applied`** with an `org_id`, resolves the **bitbucket-server** integration id (same rules as Stage 3), and **PUT**s a fixed SCM settings profile via Snyk Integrations v1 (`/org/{orgId}/integrations/{integrationId}/settings`). Writes **`broker-integration-settings-report.json`**. Does **not** process `skipped` or `failed` apply rows. **`--dry-run`** lists intended updates without PUT. Requires `SNYK_INTEGRATIONS_API=v1`.
 
 ### Stage 3 — `snyk-import`
 
@@ -164,6 +182,16 @@ Uses the same **`BITBUCKET_*`** variables as Bitbucket discovery (see above), in
 
 Apply reads `tenant_id` and `install_id` from the plan file; orgs must exist in Snyk before `snyk-broker-apply`.
 
+### Stage 2.3 (integration settings)
+
+| Flag | Description |
+|------|-------------|
+| `--report PATH` | **Required.** `broker-org-apply-report.json` from Stage 2.2. |
+| `--output PATH` | Settings apply report (default: `broker-integration-settings-report.json`). |
+| `--dry-run` | Print report JSON to stdout; no settings PUT. |
+
+Uses `SNYK_TOKEN` and **`SNYK_INTEGRATIONS_API=v1`** (required). Processes only `applied` entries with `org_id`.
+
 ### Stage 3
 
 | Variable | Required | Description |
@@ -192,6 +220,9 @@ If you omit `--env-file`, the CLI loads `.env` from the **current working direct
 | `discover bitbucket` | Bitbucket → discovery or stdout rows | `-o`, `--empty-repos-output`, `--no-empty-repos-output`, `--env-file`, `--max-repos`, `--flush-interval` |
 | `discover spreadsheet` | `bb-repo-mapping.xlsx` + Bitbucket → discovery | `-i`, `-o`, `--env-file`, `--max-repos`, `--flush-interval`, empty-repos flags |
 | `snyk-orgs` | discovery → `snyk-orgs.json` | `--discovery`, `--output`, `--group-id`, `--template-org-id`, `--dry-run` |
+| `snyk-broker-plan` | snyk-orgs → broker-org-plan.json | `--snyk-orgs`, `--output`, `--tenant-id`, `--install-id`, `--env-file`, `--dry-run` |
+| `snyk-broker-apply` | plan → broker-org-apply-report.json | `--plan`, `--output`, `--env-file`, `--dry-run` |
+| `snyk-broker-integration-settings` | apply report → settings report | `--report`, `--output`, `--env-file`, `--dry-run` |
 | `snyk-import` | discovery → `snyk-import.json` + Snyk IDs | `--discovery`, `--output`, `--repos-per-batch` (optional), `--snyk-orgs`, `--default-org-id`, `--env-file`, `--dry-run` |
 
 ```bash
@@ -360,11 +391,14 @@ pytest
 
 | Path | Purpose |
 |------|---------|
-| `src/main.py` | Entry: dispatches to `discover`, `snyk-orgs`, `snyk-import` |
+| `src/main.py` | Entry: dispatches pipeline stage commands |
 | `src/commands/dispatch.py` | Router and console-script entrypoints |
 | `src/commands/bitbucket_cli.py` | Stage 1 Bitbucket |
 | `src/commands/spreadsheet_cli.py` | Stage 1 spreadsheet |
 | `src/commands/snyk_orgs_cli.py` | Stage 2 |
+| `src/commands/snyk_broker_plan_cli.py` | Stage 2.1 Broker Plan |
+| `src/commands/snyk_broker_apply_cli.py` | Stage 2.2 Broker Apply |
+| `src/commands/snyk_broker_integration_settings_cli.py` | Stage 2.3 integration settings |
 | `src/commands/snyk_import_cli.py` | Stage 3 |
 | `src/common/` | Discovery document, mapper, output state, spreadsheet ingestion |
 | `src/config/` | Environment and optional `.env` |

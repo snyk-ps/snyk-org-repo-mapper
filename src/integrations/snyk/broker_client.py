@@ -77,6 +77,14 @@ def _scm_type_slug_from_string(raw: str) -> str | None:
 
 def _connection_type_slug(item: dict[str, Any]) -> str | None:
     attrs = item.get("attributes")
+
+    if isinstance(attrs, dict):
+        config = attrs.get("configuration")
+        if isinstance(config, dict):
+            type = config.get("type")
+            if isinstance(type, str) and type.strip():
+                return type.strip().lower().replace("_", "-")
+
     if isinstance(attrs, dict):
         for key in _ATTR_SCM_TYPE_KEYS:
             raw = attrs.get(key)
@@ -84,15 +92,28 @@ def _connection_type_slug(item: dict[str, Any]) -> str | None:
                 slug = _scm_type_slug_from_string(raw)
                 if slug is not None:
                     return slug
+
+    slug = _scm_type_slug_from_string(raw)
+    if slug is not None:
+        return slug
+
     for key in ("integrationType", "integration_type"):
         raw = item.get(key)
         if isinstance(raw, str) and raw.strip():
             slug = _scm_type_slug_from_string(raw)
             if slug is not None:
                 return slug
+
+    slug = _scm_type_slug_from_string(raw)
+    if slug is not None:
+        return slug
+
     raw_type = item.get("type")
     if isinstance(raw_type, str) and raw_type.strip():
-        return _scm_type_slug_from_string(raw_type)
+        slug = _scm_type_slug_from_string(raw_type)
+        if slug is not None:
+            return slug
+
     return None
 
 
@@ -173,7 +194,7 @@ class BrokerClient:
                     ) from exc
                 if not _is_retriable_request_failure(exc):
                     detail = exc.read().decode("utf-8", errors="replace")
-                    msg = f"Snyk Broker API HTTP {exc.code} for {url}: {detail[:500]}"
+                    msg = f"Snyk Broker API HTTP {exc.code} for {url}: {detail[:500]} \n {body.decode('utf-8')}"
                     raise RuntimeError(msg) from exc
                 raise
             if not raw:
@@ -303,7 +324,7 @@ class BrokerClient:
         )
         sep = "&" if "?" in base else "?"
         url = f"{base}{sep}{self._version_query()}"
-        body = b"{}"
+        body = b"""{"data": {"type": "bitbucket-server"}}"""
         parsed = self._request_json(url, method="POST", body=body)
         if isinstance(parsed, dict):
             return parsed

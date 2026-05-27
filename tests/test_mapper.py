@@ -157,6 +157,11 @@ def test_iter_mapping_no_default_branch_is_empty() -> None:
         def iter_repositories(self, project_key: str, *, page_limit: int = 100):
             yield {"slug": "nobranch", "name": "No Branch"}
 
+        def get_default_branch(self, project_key: str, repo_slug: str):
+            from integrations.bitbucket import DEFAULT_BRANCH_EMPTY_REPO
+
+            return DEFAULT_BRANCH_EMPTY_REPO
+
         def repository_latest_commit(self, project_key: str, repo_slug: str):
             raise AssertionError("should not check commits when no default branch")
 

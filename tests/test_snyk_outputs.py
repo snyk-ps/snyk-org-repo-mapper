@@ -82,27 +82,50 @@ def test_build_snyk_import_document_default_org_composite_names() -> None:
     ]
     doc = build_snyk_import_document(
         rows,
-        project_apm={},
         default_org_id="00000000-0000-0000-0000-000000000001",
     )
     names = [t["target"]["name"] for t in doc["targets"]]
     assert names == ["P1/foo", "P2/foo"]
 
 
-def test_build_snyk_import_document_apm_project_unprefixed_name() -> None:
+def test_build_snyk_import_document_apm_row_unprefixed_name() -> None:
     rows = [
         {
             "repository_path": "P1/my-service",
             "repository_name": "My Service",
             "production_branch": "main",
+            "apm_code": "APM1",
         },
     ]
     doc = build_snyk_import_document(
         rows,
-        project_apm={"P1": "APM1"},
         default_org_id="00000000-0000-0000-0000-000000000001",
     )
     assert doc["targets"][0]["target"]["name"] == "My Service"
+
+
+def test_build_snyk_import_document_mixed_apm_and_default_org_naming() -> None:
+    rows = [
+        {
+            "repository_path": "P1/with-apm",
+            "repository_name": "with-apm",
+            "production_branch": "",
+            "apm_code": "APM1",
+        },
+        {
+            "repository_path": "P1/no-apm",
+            "repository_name": "no-apm",
+            "production_branch": "",
+            "apm_code": None,
+        },
+    ]
+    doc = build_snyk_import_document(
+        rows,
+        default_org_id="00000000-0000-0000-0000-000000000001",
+    )
+    names = {t["target"]["repoSlug"]: t["target"]["name"] for t in doc["targets"]}
+    assert names["with-apm"] == "with-apm"
+    assert names["no-apm"] == "P1/no-apm"
 
 
 def test_build_snyk_import_document_default_org_slug_fallback() -> None:
@@ -115,7 +138,6 @@ def test_build_snyk_import_document_default_org_slug_fallback() -> None:
     ]
     doc = build_snyk_import_document(
         rows,
-        project_apm={},
         default_org_id="default-org-id",
     )
     assert doc["targets"][0]["target"]["name"] == "NOPM/r1"

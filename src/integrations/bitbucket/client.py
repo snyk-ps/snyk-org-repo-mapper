@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from http.client import RemoteDisconnected
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -38,6 +39,27 @@ def parse_committer_identity(commit: dict[str, Any]) -> tuple[str | None, str | 
     if name is not None or email is not None:
         return name, email
     return _person_identity(commit.get("author"))
+
+
+def _commit_timestamp_ms(commit: dict[str, Any]) -> int | None:
+    """Return commit time in milliseconds since epoch from a Bitbucket commit object."""
+    for key in ("committerTimestamp", "authorTimestamp"):
+        raw = commit.get(key)
+        if isinstance(raw, bool):
+            continue
+        if isinstance(raw, int) and raw >= 0:
+            return raw
+        if isinstance(raw, float) and raw >= 0:
+            return int(raw)
+    return None
+
+
+def parse_commit_timestamp(commit: dict[str, Any]) -> str | None:
+    """Return latest commit time as UTC ISO-8601, or ``None`` if unavailable."""
+    ms = _commit_timestamp_ms(commit)
+    if ms is None:
+        return None
+    return datetime.fromtimestamp(ms / 1000, tz=UTC).isoformat()
 
 
 def repository_has_default_branch(repo: dict[str, Any]) -> bool:

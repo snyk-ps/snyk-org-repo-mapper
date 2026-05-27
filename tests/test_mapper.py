@@ -1,5 +1,7 @@
 """Tests for mapping row assembly."""
 
+import logging
+
 from common.mapper import (
     collect_mapping,
     iter_mapping,
@@ -20,11 +22,13 @@ def test_mapping_row_with_yaml() -> None:
         is_empty=False,
         last_committer_name="alice",
         last_committer_email="alice@example.com",
+        last_commit_date="2024-01-01T00:00:00+00:00",
     )
     assert row["apm_code"] == "A1"
     assert row["is_empty"] is False
     assert row["last_committer_name"] == "alice"
     assert row["last_committer_email"] == "alice@example.com"
+    assert row["last_commit_date"] == "2024-01-01T00:00:00+00:00"
     assert row["repository_path"] == "PRJ/svc"
     assert row["repository_name"] == "svc"
     assert row["production_branch"] == "prod"
@@ -43,6 +47,7 @@ def test_mapping_row_without_file_uses_default_branch() -> None:
     )
     assert row["apm_code"] is None
     assert row["production_branch"] == "release"
+    assert row["last_commit_date"] is None
 
 
 def test_collect_mapping_invokes_client() -> None:
@@ -57,6 +62,7 @@ def test_collect_mapping_invokes_client() -> None:
         def repository_latest_commit(self, project_key: str, repo_slug: str):
             return {
                 "committer": {"name": "dev", "emailAddress": "dev@example.com"},
+                "committerTimestamp": 1_704_067_200_000,
             }
 
         def get_repository(self, project_key: str, repo_slug: str):
@@ -72,6 +78,7 @@ def test_collect_mapping_invokes_client() -> None:
     assert rows[0]["repository_path"] == "PRJ/r1"
     assert rows[0]["last_committer_name"] == "dev"
     assert rows[0]["last_committer_email"] == "dev@example.com"
+    assert rows[0]["last_commit_date"] == "2024-01-01T00:00:00+00:00"
 
 
 def test_iter_mapping_skips_completed() -> None:
@@ -146,6 +153,7 @@ def test_iter_mapping_empty_repo_skips_yaml() -> None:
     assert rows[0]["apm_code"] is None
     assert rows[0]["last_committer_name"] is None
     assert rows[0]["last_committer_email"] is None
+    assert rows[0]["last_commit_date"] is None
     assert fetched == []
 
 
@@ -186,7 +194,10 @@ def test_iter_mapping_for_repos_from_sheet() -> None:
             }
 
         def repository_latest_commit(self, project_key: str, repo_slug: str):
-            return {"author": {"name": "a", "emailAddress": "a@x.com"}}
+            return {
+                "author": {"name": "a", "emailAddress": "a@x.com"},
+                "authorTimestamp": 1_704_067_200_000,
+            }
 
         def fetch_raw_file(self, pk: str, slug: str, path: str, at_ref: str):
             return b"security:\n  apmCode: Z9\n"
@@ -204,6 +215,24 @@ def test_iter_mapping_for_repos_from_sheet() -> None:
     )
     assert rows[0]["apm_code"] == "Z9"
     assert rows[0]["last_committer_name"] == "a"
+    assert rows[0]["last_commit_date"] == "2024-01-01T00:00:00+00:00"
+
+
+def test_mapping_row_warns_on_unconventional_apm_code(caplog) -> None:
+    body = b"security:\n  apmCode: A1\n"
+    with caplog.at_level(logging.WARNING):
+        row = mapping_row(
+            project_key="PRJ",
+            project_name="Project",
+            repo_slug="svc",
+            repo_name="svc",
+            file_bytes=body,
+            default_display="main",
+            is_empty=False,
+        )
+    assert row["apm_code"] == "A1"
+    assert "A1" in caplog.text
+    assert "PRJ/svc" in caplog.text
 
 
 def test_row_is_empty_strict() -> None:

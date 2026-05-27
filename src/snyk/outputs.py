@@ -60,10 +60,16 @@ def default_org_target_name(
     return f"{project_key}/{repo_part}"
 
 
+def _row_apm_code(row: dict[str, Any]) -> str | None:
+    raw = row.get("apm_code")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    return None
+
+
 def build_snyk_import_document(
     rows: list[dict[str, Any]],
     *,
-    project_apm: dict[str, str] | None = None,
     default_org_id: str | None = None,
 ) -> dict[str, Any]:
     """Build the Bitbucket Server import targets document from mapping rows.
@@ -71,14 +77,12 @@ def build_snyk_import_document(
     Args:
         rows: Mapping rows including ``repository_path``, ``repository_name``,
             ``production_branch``.
-        project_apm: Optional ``projectKey → apm_code`` map from discovery.
-        default_org_id: When set, targets whose project has no APM entry use
+        default_org_id: When set, targets whose row has no ``apm_code`` use
             composite ``target.name`` via :func:`default_org_target_name`.
 
     Returns:
         JSON object with a ``targets`` array.
     """
-    apm_map = project_apm if project_apm is not None else {}
     use_default_naming = (
         default_org_id is not None
         and isinstance(default_org_id, str)
@@ -96,7 +100,7 @@ def build_snyk_import_document(
             continue
         name = row.get("repository_name")
         branch = row.get("production_branch")
-        if use_default_naming and project_key not in apm_map:
+        if use_default_naming and _row_apm_code(row) is None:
             repo_name = default_org_target_name(project_key, name, repo_slug)
         else:
             repo_name = name if isinstance(name, str) else repo_slug

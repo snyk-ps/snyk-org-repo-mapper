@@ -5,13 +5,17 @@ from __future__ import annotations
 from collections.abc import Iterable, Iterator
 from typing import Any
 
-from common.appsec_yaml import parse_appsec_yaml, resolve_production_branch
+from common.appsec_yaml import (
+    parse_appsec_yaml,
+    resolve_production_branch,
+    warn_if_apm_code_unconventional,
+)
 from integrations.bitbucket import (
     BitbucketServerClient,
     DEFAULT_BRANCH_EMPTY_REPO,
     resolve_repository_branch,
 )
-from integrations.bitbucket.client import parse_committer_identity
+from integrations.bitbucket.client import parse_committer_identity, parse_commit_timestamp
 
 
 def row_is_empty(row: dict[str, Any]) -> bool:
@@ -39,6 +43,7 @@ def mapping_row(
     is_empty: bool,
     last_committer_name: str | None = None,
     last_committer_email: str | None = None,
+    last_commit_date: str | None = None,
 ) -> dict[str, Any]:
     """Assemble one output row combining API metadata and optional file content."""
     apm_code: str | None = None
@@ -54,6 +59,8 @@ def mapping_row(
 
     production_branch = resolve_production_branch(yaml_branch, default_display)
     repository_path = f"{project_key}/{repo_slug}"
+    if apm_code is not None:
+        warn_if_apm_code_unconventional(apm_code, repository_path=repository_path)
     return {
         "apm_code": apm_code,
         "repository_path": repository_path,
@@ -63,6 +70,7 @@ def mapping_row(
         "is_empty": is_empty,
         "last_committer_name": last_committer_name,
         "last_committer_email": last_committer_email,
+        "last_commit_date": last_commit_date,
     }
 
 
@@ -83,6 +91,7 @@ def _empty_mapping_row(
         is_empty=True,
         last_committer_name=None,
         last_committer_email=None,
+        last_commit_date=None,
     )
 
 
@@ -120,8 +129,10 @@ def _mapping_row_for_repository(
     is_empty = latest_commit is None
     committer_name: str | None = None
     committer_email: str | None = None
+    last_commit_date: str | None = None
     if latest_commit is not None:
         committer_name, committer_email = parse_committer_identity(latest_commit)
+        last_commit_date = parse_commit_timestamp(latest_commit)
 
     if is_empty:
         return _empty_mapping_row(
@@ -145,6 +156,7 @@ def _mapping_row_for_repository(
         is_empty=is_empty,
         last_committer_name=committer_name,
         last_committer_email=committer_email,
+        last_commit_date=last_commit_date,
     )
 
 

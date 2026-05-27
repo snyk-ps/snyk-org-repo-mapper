@@ -94,7 +94,7 @@ pip install -e ".[dev]"
 
 ### Stage 1 — `discover bitbucket` or `discover spreadsheet`
 
-**Bitbucket** walks projects and repositories, checks each repo for commits (zero commits → `is_empty: true`), records **`last_committer_name`** and **`last_committer_email`** from the latest commit when not empty (API `committer`, falling back to `author`), reads a YAML file from non-empty repos (see [YAML format](#yaml-file-format)), merges AppSec fields with API metadata, and either prints a JSON **array of rows** to stdout or writes **discovery JSON** with `-o` / `--output`. With `-o`, also writes **`bitbucket-empty-repos.json`** by default listing empty repositories (override with `--empty-repos-output`; disable with `--no-empty-repos-output`).
+**Bitbucket** walks projects and repositories, checks each repo for commits (zero commits → `is_empty: true`), records **`last_committer_name`** and **`last_committer_email`** from the latest commit when not empty (API `committer`, falling back to `author`), **`last_commit_date`** as UTC ISO-8601 from `committerTimestamp` (falling back to `authorTimestamp`), reads a YAML file from non-empty repos (see [YAML format](#yaml-file-format)), merges AppSec fields with API metadata, and either prints a JSON **array of rows** to stdout or writes **discovery JSON** with `-o` / `--output`. With `-o`, also writes **`bitbucket-empty-repos.json`** by default listing empty repositories (override with `--empty-repos-output`; disable with `--no-empty-repos-output`).
 
 **Spreadsheet** reads `bb-repo-mapping.xlsx` (project keys + semicolon-delimited repo slugs), queries Bitbucket per repo for YAML-derived APM and full row metadata (see [Stage 1 (spreadsheet)](#stage-1-spreadsheet)), and writes discovery JSON with `source: bitbucket`.
 
@@ -114,7 +114,7 @@ Reads `broker-org-plan.json` and **POST**s org–connection integrations for eac
 
 ### Stage 3 — `snyk-import`
 
-Reads `--discovery`, builds import targets (skips rows with **`is_empty: true`**), then calls the **Snyk REST API** to resolve `orgId` and `integrationId`. Optional **`--repos-per-batch N`** writes multiple import files (`snyk-import-001.json`, …) with at most **N** targets each for the API Import Tool. Optional `--snyk-orgs` cross-checks that org names cover the APM codes needed by the import. Optional **`--default-org-id`** routes targets from Bitbucket projects with no `apm_code` into one org; their `target.name` is **`{projectKey}/{repository_name}`** (repository slug when display name is absent) so repos with the same name in different projects stay unique. **No Bitbucket HTTP** in this stage.
+Reads `--discovery`, builds import targets (skips rows with **`is_empty: true`**), then calls the **Snyk REST API** to resolve `orgId` and `integrationId` per repository using that row’s `apm_code` (Snyk org **name** = APM code). Repositories in the same Bitbucket project may have different APM codes. Optional **`--repos-per-batch N`** writes multiple import files (`snyk-import-001.json`, …) with at most **N** targets each for the API Import Tool. Optional `--snyk-orgs` cross-checks that org names cover the APM codes needed by the import. Optional **`--default-org-id`** routes targets whose discovery row has no `apm_code` into one org; their `target.name` is **`{projectKey}/{repository_name}`** (repository slug when display name is absent). Rows with an `apm_code` keep unprefixed display names even when siblings in the same project use the default org. **No Bitbucket HTTP** in this stage.
 
 ## Configuration by stage
 
@@ -179,7 +179,7 @@ Apply reads `tenant_id` and `install_id` from the plan file; orgs must exist in 
 
 | Flag | Description |
 |------|-------------|
-| `--default-org-id UUID` | Snyk org id for import targets whose Bitbucket project has no `apm_code`. Sets composite `target.name` = `{projectKey}/{repository_name}`. |
+| `--default-org-id UUID` | Snyk org id for import targets whose discovery row has no `apm_code` (null/empty). Sets composite `target.name` = `{projectKey}/{repository_name}` for those rows only. |
 
 ### Optional `.env`
 
@@ -219,7 +219,8 @@ PYTHONPATH=src python src/main.py snyk-import -h
       "bitbucket_project_name": "My Project",
       "is_empty": false,
       "last_committer_name": "charlie",
-      "last_committer_email": "charlie@example.com"
+      "last_committer_email": "charlie@example.com",
+      "last_commit_date": "2024-03-15T10:30:00+00:00"
     }
   ],
   "checkpoint": {
@@ -229,7 +230,7 @@ PYTHONPATH=src python src/main.py snyk-import -h
 }
 ```
 
-`checkpoint` may be `null` when empty or not yet written. **Stdout** (no `-o`) is still a **bare array** of the same row objects. Bitbucket rows include **`is_empty`** (`true` when the repo has zero commits) and **`last_committer_name`** / **`last_committer_email`** (`null` when empty; from the latest commit otherwise). Spreadsheet rows omit `is_empty` and committer fields; Stage 3 treats missing `is_empty` as not empty. Stages 2–3 do not use committer metadata.
+`checkpoint` may be `null` when empty or not yet written. **Stdout** (no `-o`) is still a **bare array** of the same row objects. Bitbucket rows include **`is_empty`** (`true` when the repo has zero commits), **`last_committer_name`** / **`last_committer_email`** (`null` when empty; from the latest commit otherwise), and **`last_commit_date`** (`null` when empty; UTC ISO-8601 from the latest commit otherwise). Spreadsheet rows omit `is_empty` and committer fields; Stage 3 treats missing `is_empty` as not empty. Stages 2–3 do not use committer or commit-date metadata.
 
 ### `bitbucket-empty-repos.json` (Stage 1 Bitbucket, with `-o`)
 

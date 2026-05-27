@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from integrations.snyk.client import SnykRestClient, pick_bitbucket_server_integration_id
+from snyk.project_context import RepoApmMap
 
 
 def org_names_from_snyk_orgs_document(doc: dict[str, Any]) -> set[str]:
@@ -27,15 +28,25 @@ def org_names_from_snyk_orgs_document(doc: dict[str, Any]) -> set[str]:
     return names
 
 
+def _target_repo_key(tgt: dict[str, Any]) -> tuple[str, str] | None:
+    pk = tgt.get("projectKey")
+    slug = tgt.get("repoSlug")
+    if not isinstance(pk, str) or not pk.strip():
+        return None
+    if not isinstance(slug, str) or not slug.strip():
+        return None
+    return pk.strip(), slug.strip()
+
+
 def required_apm_codes_for_import(
-    project_apm: dict[str, str],
+    repo_apm: RepoApmMap,
     import_doc: dict[str, Any],
     *,
     default_org_id: str | None = None,
 ) -> set[str]:
     """Collect ``apm_code`` values needed for all import targets.
 
-    Targets whose ``projectKey`` is missing from ``project_apm`` are skipped when
+    Targets with no ``apm_code`` in ``repo_apm`` are skipped when
     ``default_org_id`` is a non-empty string (those targets use the default org).
     """
     targets = import_doc.get("targets")
@@ -50,19 +61,23 @@ def required_apm_codes_for_import(
         if not isinstance(tgt, dict):
             msg = f"targets[{i}] missing 'target' object"
             raise ValueError(msg)
-        pk = tgt.get("projectKey")
-        if not isinstance(pk, str) or not pk.strip():
-            msg = f"targets[{i}].target.projectKey missing or invalid"
+        repo_key = _target_repo_key(tgt)
+        if repo_key is None:
+            pk = tgt.get("projectKey")
+            slug = tgt.get("repoSlug")
+            if not isinstance(pk, str) or not pk.strip():
+                msg = f"targets[{i}].target.projectKey missing or invalid"
+                raise ValueError(msg)
+            msg = f"targets[{i}].target.repoSlug missing or invalid"
             raise ValueError(msg)
-        pk = pk.strip()
-        code = project_apm.get(pk)
+        project_key, repo_slug = repo_key
+        code = repo_apm.get(repo_key)
         if code is None:
             if default_org_id is not None and default_org_id.strip():
                 continue
             msg = (
-                f"No apm_code for Bitbucket project {pk!r} in project context "
-                f"(targets[{i}]). Add mapping rows, extend project context, or pass "
-                f"--default-org-id for projects without YAML APM."
+                f"No apm_code for repository {project_key}/{repo_slug!r} "
+                f"(targets[{i}]). Add discovery YAML APM or pass --default-org-id."
             )
             raise ValueError(msg)
         needed.add(code)
@@ -100,7 +115,7 @@ def build_name_to_org_id(api_orgs: list[dict[str, str]]) -> dict[str, str]:
 def enrich_import_document(
     import_doc: dict[str, Any],
     *,
-    project_apm: dict[str, str],
+    repo_apm: RepoApmMap,
     name_to_org_id: dict[str, str],
     org_to_integration_id: dict[str, str],
     default_org_id: str | None = None,
@@ -120,11 +135,11 @@ def enrich_import_document(
         if not isinstance(tgt, dict):
             new_targets.append(clone)
             continue
-        pk = tgt.get("projectKey")
-        if not isinstance(pk, str) or not pk.strip():
+        repo_key = _target_repo_key(tgt)
+        if repo_key is None:
             new_targets.append(clone)
             continue
-        code = project_apm.get(pk.strip())
+        code = repo_apm.get(repo_key)
         if code is None:
             if default_org_id is None or not default_org_id.strip():
                 new_targets.append(clone)
@@ -177,7 +192,7 @@ def integration_cache_for_orgs(
 
 def summarize_enrichment_plan(
     import_doc: dict[str, Any],
-    project_apm: dict[str, str],
+    repo_apm: RepoApmMap,
     name_to_org_id: dict[str, str],
     org_to_integration_id: dict[str, str],
     *,
@@ -194,10 +209,11 @@ def summarize_enrichment_plan(
         tgt = item.get("target")
         if not isinstance(tgt, dict):
             continue
-        pk = tgt.get("projectKey")
-        if not isinstance(pk, str):
+        repo_key = _target_repo_key(tgt)
+        if repo_key is None:
             continue
-        code = project_apm.get(pk.strip())
+        project_key, repo_slug = repo_key
+        code = repo_apm.get(repo_key)
         if code is None:
             if default_org_id is not None and default_org_id.strip():
                 oid = default_org_id.strip()
@@ -205,11 +221,14 @@ def summarize_enrichment_plan(
                 cur_o = item.get("orgId")
                 cur_i = item.get("integrationId")
                 lines.append(
-                    f"targets[{i}] project={pk!r}: no apm_code; default orgId={oid!r} "
-                    f"integrationId={iid!r} (current orgId={cur_o!r} integrationId={cur_i!r})"
+                    f"targets[{i}] {project_key}/{repo_slug}: no apm_code; "
+                    f"default orgId={oid!r} integrationId={iid!r} "
+                    f"(current orgId={cur_o!r} integrationId={cur_i!r})"
                 )
             else:
-                lines.append(f"targets[{i}] project={pk!r}: NO apm_code in context")
+                lines.append(
+                    f"targets[{i}] {project_key}/{repo_slug}: NO apm_code in discovery"
+                )
             continue
         oid = name_to_org_id.get(code, "?")
         iid = "?"
@@ -218,7 +237,8 @@ def summarize_enrichment_plan(
         cur_o = item.get("orgId")
         cur_i = item.get("integrationId")
         lines.append(
-            f"targets[{i}] project={pk!r} apm={code!r} -> orgId={oid} integrationId={iid} "
+            f"targets[{i}] {project_key}/{repo_slug} apm={code!r} -> "
+            f"orgId={oid} integrationId={iid} "
             f"(current orgId={cur_o!r} integrationId={cur_i!r})"
         )
     return "\n".join(lines) if lines else "(no targets)"

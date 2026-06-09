@@ -14,6 +14,7 @@ SNYK_PLACEHOLDER_SOURCE_ORG_ID = "<public_snyk_organization_id>"
 SNYK_PLACEHOLDER_ORG_ID = "******"
 SNYK_PLACEHOLDER_INTEGRATION_ID = "******"
 
+APP_TYPE_PREFIX = "BB/"
 
 def build_snyk_orgs_document(
     apm_codes: set[str],
@@ -112,7 +113,7 @@ def build_snyk_import_document(
                 "target": {
                     "projectKey": project_key,
                     "repoSlug": repo_slug,
-                    "name": repo_name,
+                    "name": f"{APP_TYPE_PREFIX}{repo_name}",
                     "branch": branch_name,
                 },
             }

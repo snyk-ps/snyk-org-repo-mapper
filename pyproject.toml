@@ -23,6 +23,7 @@ repo-mapper-discover-spreadsheet = "commands.dispatch:main_discover_spreadsheet"
 repo-mapper-snyk-orgs = "commands.dispatch:main_snyk_orgs"
 repo-mapper-snyk-broker-plan = "commands.dispatch:main_snyk_broker_plan"
 repo-mapper-snyk-broker-apply = "commands.dispatch:main_snyk_broker_apply"
+repo-mapper-snyk-broker-integration-settings = "commands.dispatch:main_snyk_broker_integration_settings"
 repo-mapper-snyk-import = "commands.dispatch:main_snyk_import"
 
 [tool.setuptools.packages.find]

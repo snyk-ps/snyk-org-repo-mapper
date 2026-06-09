@@ -222,6 +222,46 @@ class SnykRestClient:
             url = _resolve_next_url(s.rest_root, next_link)
         return out
 
+    def update_org_integration_settings(
+        self,
+        org_id: str,
+        integration_id: str,
+        settings: dict[str, Any],
+    ) -> None:
+        """PUT integration settings via Snyk Integrations v1 API."""
+        oid = org_id.strip()
+        iid = integration_id.strip()
+        url = f"{self._settings.v1_root}/org/{oid}/integrations/{iid}/settings"
+        body = json.dumps(settings).encode("utf-8")
+        req = Request(
+            url,
+            data=body,
+            headers={
+                "Authorization": f"token {self._settings.token}",
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            },
+            method="PUT",
+        )
+
+        def inner() -> None:
+            try:
+                with urlopen(req, timeout=self._timeout) as resp:
+                    resp.read()
+            except HTTPError as exc:
+                if not _is_retriable_request_failure(exc):
+                    detail = exc.read().decode("utf-8", errors="replace")
+                    msg = f"Snyk API HTTP {exc.code} for {url}: {detail[:500]}"
+                    raise RuntimeError(msg) from exc
+                raise
+
+        run_with_retries(
+            inner,
+            max_attempts=self._settings.http_max_attempts,
+            base_backoff_s=self._settings.http_backoff_seconds,
+            retry=_is_retriable_request_failure,
+        )
+
     def iter_org_integrations(self, org_id: str) -> list[dict[str, Any]]:
         """Return integration objects for JSON:API (rest) or flat v1 payloads."""
         if self._settings.integrations_api == "rest":

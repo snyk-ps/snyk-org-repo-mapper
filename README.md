@@ -1,6 +1,6 @@
 # bitbucket-org-repo-mapper
 
-This project helps you onboard Bitbucket Server repositories into Snyk in **stages**: produce a single **discovery** JSON from Bitbucket or from a spreadsheet, derive **`snyk-orgs.json`** for org creation, optionally plan and apply **Universal Broker** org–connection assignments, then build **`snyk-import.json`** and resolve Snyk `orgId` / `integrationId` via the Snyk REST API. Stage 3 never calls Bitbucket.
+This project helps you onboard Bitbucket Server repositories into Snyk in **stages**: produce a single **discovery** JSON from Bitbucket or from a spreadsheet, derive **`snyk-orgs.json`** for org creation, optionally plan and apply **Universal Broker** org–connection assignments, build **`snyk-import.json`** and resolve Snyk `orgId` / `integrationId` via the Snyk REST API, then optionally run **post-import cleanup** across the whole Snyk group. Stages 3 and 4 never call Bitbucket.
 
 ## Quick start
 
@@ -31,7 +31,7 @@ This project helps you onboard Bitbucket Server repositories into Snyk in **stag
 
    Optional: pass **`--group-id`** and **`--template-org-id`** (UUIDs) so each org entry’s `groupId` and `sourceOrgId` are filled instead of placeholder strings.
 
-   Create orgs in Snyk (matching names in `snyk-orgs.json`) before Stage 2.2 — Broker Apply and Stage 3 if they do not exist yet.
+   Create orgs in Snyk (matching names in `snyk-orgs.json`) before Stage 2.2 — Broker Apply, Stage 3, or Stage 4 if they do not exist yet.
 
 3. **Stage 2.1 — Broker Plan** (optional; requires existing Broker deployments and `bitbucket-server` connections):
 
@@ -80,7 +80,20 @@ This project helps you onboard Bitbucket Server repositories into Snyk in **stag
      --snyk-orgs snyk-orgs.json
    ```
 
-After `pip install -e .`, the same flows are available as `repo-mapper-discover-bitbucket`, `repo-mapper-discover-spreadsheet`, `repo-mapper-snyk-orgs`, `repo-mapper-snyk-broker-plan`, `repo-mapper-snyk-broker-apply`, `repo-mapper-snyk-broker-integration-settings`, and `repo-mapper-snyk-import` on your `PATH`.
+7. **Stage 4 — post-import cleanup** (optional; runs after import):
+
+   ```bash
+   export SNYK_TOKEN='your-token'
+   export SNYK_GROUP_ID='your-group-uuid'
+   export SNYK_INTEGRATIONS_API='v1'
+
+   PYTHONPATH=src python src/main.py snyk-post-import-cleanup \
+     --output post-import-cleanup-report.json
+   ```
+
+   **Destructive:** deletes Dockerfile Snyk projects in every org in the group. Run with **`--dry-run`** first to review the report on stdout. Requires token permissions to delete projects and edit integrations.
+
+After `pip install -e .`, the same flows are available as `repo-mapper-discover-bitbucket`, `repo-mapper-discover-spreadsheet`, `repo-mapper-snyk-orgs`, `repo-mapper-snyk-broker-plan`, `repo-mapper-snyk-broker-apply`, `repo-mapper-snyk-broker-integration-settings`, `repo-mapper-snyk-import`, and `repo-mapper-snyk-post-import-cleanup` on your `PATH`.
 
 ## Requirements
 
@@ -91,6 +104,7 @@ After `pip install -e .`, the same flows are available as `repo-mapper-discover-
 - **Stages 2.1–2.2 (Broker):** `SNYK_TOKEN`, `SNYK_TENANT_ID`, `SNYK_BROKER_INSTALL_ID`; `SNYK_GROUP_ID` recommended for org name → UUID resolution.
 - **Stage 2.3 (integration settings):** `SNYK_TOKEN`; `SNYK_INTEGRATIONS_API` must be `v1` (default). Token needs permission to edit integrations.
 - **Stage 3:** Snyk REST credentials (`SNYK_TOKEN`, `SNYK_GROUP_ID`); optional `--snyk-orgs` for a consistency check.
+- **Stage 4 (post-import cleanup):** `SNYK_TOKEN`, `SNYK_GROUP_ID`; `SNYK_INTEGRATIONS_API` must be `v1`. Token needs permission to delete projects and edit integrations. Use `--dry-run` before the first live run.
 
 ## Installation
 
@@ -133,6 +147,10 @@ Reads **`broker-org-apply-report.json`**, processes each entry in **`applied`** 
 ### Stage 3 — `snyk-import`
 
 Reads `--discovery`, builds import targets (skips rows with **`is_empty: true`**), then calls the **Snyk REST API** to resolve `orgId` and `integrationId` per repository using that row’s `apm_code` (Snyk org **name** = APM code). Repositories in the same Bitbucket project may have different APM codes. Optional **`--repos-per-batch N`** writes multiple import files (`snyk-import-001.json`, …) with at most **N** targets each for the API Import Tool. Optional `--snyk-orgs` cross-checks that org names cover the APM codes needed by the import. Optional **`--default-org-id`** routes targets whose discovery row has no `apm_code` into one org; their `target.name` is **`{projectKey}/{repository_name}`** (repository slug when display name is absent). Rows with an `apm_code` keep unprefixed display names even when siblings in the same project use the default org. **No Bitbucket HTTP** in this stage.
+
+### Stage 4 — Post-import cleanup (`snyk-post-import-cleanup`)
+
+Iterates **every org** in `SNYK_GROUP_ID` and, per org: **deletes** Snyk projects with type `dockerfile`, **PUT**s recurring test frequency to `never` on all remaining projects, and **PUT**s the Stage 2.3 Bitbucket Server integration settings profile. Writes **`post-import-cleanup-report.json`**. **`--dry-run`** prints the report to stdout without DELETE or PUT. Requires `SNYK_INTEGRATIONS_API=v1`. **Destructive** — run dry-run first.
 
 ## Configuration by stage
 
@@ -207,11 +225,33 @@ Uses `SNYK_TOKEN` and **`SNYK_INTEGRATIONS_API=v1`** (required). Processes only 
 
 | Flag | Description |
 |------|-------------|
+| `--discovery PATH` | **Required.** Discovery JSON from Stage 1. |
+| `--output PATH` | **Required.** Import document (e.g. `snyk-import.json`). |
+| `--snyk-orgs PATH` | Optional cross-check against `snyk-orgs.json`. |
+| `--repos-per-batch N` | Split output into multiple files with at most N targets each. |
 | `--default-org-id UUID` | Snyk org id for import targets whose discovery row has no `apm_code` (null/empty). Sets composite `target.name` = `{projectKey}/{repository_name}` for those rows only. |
+| `--dry-run` | Print resolution plan; do not overwrite `--output`. |
+
+### Stage 4 (post-import cleanup)
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `SNYK_TOKEN` | Yes | Snyk API token. |
+| `SNYK_GROUP_ID` | Yes | UUID of the Snyk **Group** whose orgs are normalized. |
+| `SNYK_INTEGRATIONS_API` | Yes | Must be `v1` (default). Integration settings PUT is not implemented for REST. |
+| `SNYK_API`, `SNYK_API_VERSION` | No | Same as Stage 3 (REST base and version query param). |
+| `SNYK_HTTP_MAX_ATTEMPTS`, `SNYK_HTTP_BACKOFF_S` | No | Same as Stage 3. |
+
+| Flag | Description |
+|------|-------------|
+| `--output PATH` | Cleanup report (default: `post-import-cleanup-report.json`). |
+| `--dry-run` | Print report JSON to stdout; no DELETE or PUT. |
+
+Processes **every org** in the group. **Destructive** — deletes Dockerfile Snyk projects; run `--dry-run` first.
 
 ### Optional `.env`
 
-If you omit `--env-file`, the CLI loads `.env` from the **current working directory** when present (`KEY=value`; `#` comments and blank lines ignored). Stage 3 accepts `--env-file` for Snyk settings.
+If you omit `--env-file`, the CLI loads `.env` from the **current working directory** when present (`KEY=value`; `#` comments and blank lines ignored). Stages 3 and 4 accept `--env-file` for Snyk settings.
 
 ## Commands reference
 
@@ -224,6 +264,7 @@ If you omit `--env-file`, the CLI loads `.env` from the **current working direct
 | `snyk-broker-apply` | plan → broker-org-apply-report.json | `--plan`, `--output`, `--env-file`, `--dry-run` |
 | `snyk-broker-integration-settings` | apply report → settings report | `--report`, `--output`, `--env-file`, `--dry-run` |
 | `snyk-import` | discovery → `snyk-import.json` + Snyk IDs | `--discovery`, `--output`, `--repos-per-batch` (optional), `--snyk-orgs`, `--default-org-id`, `--env-file`, `--dry-run` |
+| `snyk-post-import-cleanup` | group-wide post-import normalization | `--output`, `--env-file`, `--dry-run` |
 
 ```bash
 PYTHONPATH=src python src/main.py -h
@@ -231,6 +272,7 @@ PYTHONPATH=src python src/main.py discover -h
 PYTHONPATH=src python src/main.py discover bitbucket -h
 PYTHONPATH=src python src/main.py snyk-orgs -h
 PYTHONPATH=src python src/main.py snyk-import -h
+PYTHONPATH=src python src/main.py snyk-post-import-cleanup -h
 ```
 
 ## File formats
@@ -324,6 +366,10 @@ After enrichment, targets include resolved `orgId` and `integrationId` where the
 }
 ```
 
+### `post-import-cleanup-report.json` (Stage 4)
+
+Version 1 report with per-org outcomes under `dockerfile_projects`, `recurring_test_frequency`, and `integration_settings` (each with `deleted`/`updated`, `skipped`, and `failed` arrays as applicable). Metadata includes `group_id` and `settings_profile` (`bitbucket-server-default-v1`).
+
 ## YAML file format (Stage 1 Bitbucket)
 
 The tool expects YAML like:
@@ -375,6 +421,19 @@ PYTHONPATH=src python src/main.py snyk-import \
   --env-file .env
 ```
 
+Post-import cleanup (dry run first):
+
+```bash
+export SNYK_TOKEN='your-token'
+export SNYK_GROUP_ID='your-group-uuid'
+
+PYTHONPATH=src python src/main.py snyk-post-import-cleanup --dry-run
+
+PYTHONPATH=src python src/main.py snyk-post-import-cleanup \
+  --output post-import-cleanup-report.json \
+  --env-file .env
+```
+
 **Exit codes:** `0` success, `1` runtime error (e.g. API failure), `2` configuration / usage / validation error.
 
 ## Testing
@@ -400,6 +459,7 @@ pytest
 | `src/commands/snyk_broker_apply_cli.py` | Stage 2.2 Broker Apply |
 | `src/commands/snyk_broker_integration_settings_cli.py` | Stage 2.3 integration settings |
 | `src/commands/snyk_import_cli.py` | Stage 3 |
+| `src/commands/snyk_post_import_cleanup_cli.py` | Stage 4 post-import cleanup |
 | `src/common/` | Discovery document, mapper, output state, spreadsheet ingestion |
 | `src/config/` | Environment and optional `.env` |
 | `src/integrations/` | HTTP retry, Bitbucket client, Snyk REST client |

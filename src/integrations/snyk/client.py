@@ -73,6 +73,19 @@ def _v1_type_id_map_to_integration_list(parsed: dict[str, Any]) -> list[dict[str
     return out
 
 
+def normalize_v1_projects_payload(parsed: Any) -> list[dict[str, Any]]:
+    """Turn v1 GET /org/.../projects JSON into a list of project objects."""
+    if isinstance(parsed, list):
+        return [x for x in parsed if isinstance(x, dict)]
+    if isinstance(parsed, dict):
+        for key in ("projects", "data", "results"):
+            raw = parsed.get(key)
+            if isinstance(raw, list):
+                return [x for x in raw if isinstance(x, dict)]
+    msg = "Unexpected v1 projects response shape"
+    raise RuntimeError(msg)
+
+
 def normalize_v1_integrations_payload(parsed: Any) -> list[dict[str, Any]]:
     """Turn v1 GET /org/.../integrations JSON into a list of integration objects.
 
@@ -110,6 +123,10 @@ class SnykRestClient:
     def __init__(self, settings: SnykSettings, *, timeout_s: float = 60.0) -> None:
         self._settings = settings
         self._timeout = timeout_s
+
+    @property
+    def group_id(self) -> str:
+        return self._settings.group_id
 
     def _request_rest_json_object(self, url: str) -> dict[str, Any]:
         req = Request(
@@ -232,6 +249,107 @@ class SnykRestClient:
         oid = org_id.strip()
         iid = integration_id.strip()
         url = f"{self._settings.v1_root}/org/{oid}/integrations/{iid}/settings"
+        body = json.dumps(settings).encode("utf-8")
+        req = Request(
+            url,
+            data=body,
+            headers={
+                "Authorization": f"token {self._settings.token}",
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            },
+            method="PUT",
+        )
+
+        def inner() -> None:
+            try:
+                with urlopen(req, timeout=self._timeout) as resp:
+                    resp.read()
+            except HTTPError as exc:
+                if not _is_retriable_request_failure(exc):
+                    detail = exc.read().decode("utf-8", errors="replace")
+                    msg = f"Snyk API HTTP {exc.code} for {url}: {detail[:500]}"
+                    raise RuntimeError(msg) from exc
+                raise
+
+        run_with_retries(
+            inner,
+            max_attempts=self._settings.http_max_attempts,
+            base_backoff_s=self._settings.http_backoff_seconds,
+            retry=_is_retriable_request_failure,
+        )
+
+    def iter_org_projects(
+        self,
+        org_id: str,
+        *,
+        project_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return v1 project objects for an org, optionally filtered by type."""
+        oid = org_id.strip()
+        page_size = 100
+        from_idx = 1
+        out: list[dict[str, Any]] = []
+        while True:
+            to_idx = from_idx + page_size - 1
+            url = f"{self._settings.v1_root}/org/{oid}/projects?from={from_idx}&to={to_idx}"
+            if project_type is not None and project_type.strip():
+                url = f"{url}&type={project_type.strip()}"
+            parsed = self._request_json_value(url, accept="application/json")
+            batch = normalize_v1_projects_payload(parsed)
+            if not batch:
+                break
+            out.extend(batch)
+            if len(batch) < page_size:
+                break
+            from_idx += page_size
+        return out
+
+    def delete_org_project(self, org_id: str, project_id: str) -> None:
+        """DELETE a project via Snyk REST API."""
+        s = self._settings
+        oid = org_id.strip()
+        pid = project_id.strip()
+        base_path = f"{s.rest_root}/orgs/{oid}/projects/{pid}"
+        sep = "&" if "?" in base_path else "?"
+        url = f"{base_path}{sep}version={s.api_version}"
+        req = Request(
+            url,
+            headers={
+                "Authorization": f"token {self._settings.token}",
+                "Accept": "application/vnd.api+json",
+            },
+            method="DELETE",
+        )
+
+        def inner() -> None:
+            try:
+                with urlopen(req, timeout=self._timeout) as resp:
+                    resp.read()
+            except HTTPError as exc:
+                if not _is_retriable_request_failure(exc):
+                    detail = exc.read().decode("utf-8", errors="replace")
+                    msg = f"Snyk API HTTP {exc.code} for {url}: {detail[:500]}"
+                    raise RuntimeError(msg) from exc
+                raise
+
+        run_with_retries(
+            inner,
+            max_attempts=self._settings.http_max_attempts,
+            base_backoff_s=self._settings.http_backoff_seconds,
+            retry=_is_retriable_request_failure,
+        )
+
+    def update_project_settings(
+        self,
+        org_id: str,
+        project_id: str,
+        settings: dict[str, Any],
+    ) -> None:
+        """PUT project settings via Snyk v1 API."""
+        oid = org_id.strip()
+        pid = project_id.strip()
+        url = f"{self._settings.v1_root}/org/{oid}/project/{pid}/settings"
         body = json.dumps(settings).encode("utf-8")
         req = Request(
             url,

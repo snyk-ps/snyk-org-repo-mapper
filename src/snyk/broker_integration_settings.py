@@ -6,11 +6,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-from integrations.snyk.client import SnykRestClient, pick_bitbucket_server_integration_id
-from snyk.integration_settings_defaults import (
-    BITBUCKET_SERVER_INTEGRATION_SETTINGS,
-    SETTINGS_PROFILE_ID,
-)
+from integrations.snyk.client import SnykRestClient
+from snyk.integration_settings_apply import apply_bitbucket_integration_settings_to_org
+from snyk.integration_settings_defaults import SETTINGS_PROFILE_ID
 
 BROKER_APPLY_REPORT_VERSION = 1
 INTEGRATION_SETTINGS_REPORT_VERSION = 1
@@ -84,28 +82,27 @@ def apply_integration_settings(
             )
             continue
 
-        try:
-            integrations = client.iter_org_integrations(org_id)
-            integration_id = pick_bitbucket_server_integration_id(integrations)
-            client.update_org_integration_settings(
-                org_id,
-                integration_id,
-                BITBUCKET_SERVER_INTEGRATION_SETTINGS,
-            )
+        outcome = apply_bitbucket_integration_settings_to_org(
+            client,
+            org_id,
+            org_name,
+            dry_run=False,
+        )
+        if outcome["status"] == "updated":
             updated.append(
                 {
                     "org_name": org_name,
                     "org_id": org_id,
-                    "integration_id": integration_id,
+                    "integration_id": outcome["integration_id"],
                     "status": "updated",
                 }
             )
-        except (ValueError, RuntimeError) as exc:
+        else:
             failed.append(
                 {
                     "org_name": org_name,
                     "org_id": org_id,
-                    "error": str(exc),
+                    "error": outcome.get("error", "unknown error"),
                 }
             )
 

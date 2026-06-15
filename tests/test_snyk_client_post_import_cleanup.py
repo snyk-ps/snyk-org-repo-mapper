@@ -50,7 +50,7 @@ def test_iter_org_projects_pagination_and_type_filter() -> None:
     assert len(projects) == 1
     assert projects[0]["id"] == "p1"
     assert calls[0] == (
-        "https://api.snyk.io/v1/org/org-uuid/projects?from=1&to=100&type=dockerfile"
+        "https://api.snyk.io/v1/org/org-uuid/projects?from=1&to=100&types=dockerfile"
     )
 
 

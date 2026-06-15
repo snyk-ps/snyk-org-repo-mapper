@@ -294,7 +294,7 @@ class SnykRestClient:
             to_idx = from_idx + page_size - 1
             url = f"{self._settings.v1_root}/org/{oid}/projects?from={from_idx}&to={to_idx}"
             if project_type is not None and project_type.strip():
-                url = f"{url}&type={project_type.strip()}"
+                url = f"{url}&types={project_type.strip()}"
             parsed = self._request_json_value(url, accept="application/json")
             batch = normalize_v1_projects_payload(parsed)
             if not batch:

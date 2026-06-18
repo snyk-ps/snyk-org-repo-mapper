@@ -25,5 +25,5 @@ BITBUCKET_SERVER_INTEGRATION_SETTINGS: dict[str, Any] = {
     "manualRemediationPrs": {
         "useManualPatchRemediation": False,
     },
-    "dockerfileSCMEnabled": True,
+    "dockerfileSCMEnabled": False,
 }

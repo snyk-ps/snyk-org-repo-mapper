@@ -380,6 +380,49 @@ class SnykRestClient:
             retry=_is_retriable_request_failure,
         )
 
+    def patch_org_language_settings(
+        self,
+        org_id: str,
+        language: str,
+        payload: dict[str, Any],
+    ) -> None:
+        """PATCH org language settings via Snyk REST API."""
+        s = self._settings
+        oid = org_id.strip()
+        lang = language.strip()
+        base_path = f"{s.rest_root}/orgs/{oid}/settings/open_source/languages/{lang}"
+        sep = "&" if "?" in base_path else "?"
+        url = f"{base_path}{sep}version={s.api_version}"
+        body = json.dumps(payload).encode("utf-8")
+        req = Request(
+            url,
+            data=body,
+            headers={
+                "Authorization": f"token {self._settings.token}",
+                "Accept": "application/vnd.api+json",
+                "Content-Type": "application/vnd.api+json",
+            },
+            method="PATCH",
+        )
+
+        def inner() -> None:
+            try:
+                with urlopen(req, timeout=self._timeout) as resp:
+                    resp.read()
+            except HTTPError as exc:
+                if not _is_retriable_request_failure(exc):
+                    detail = exc.read().decode("utf-8", errors="replace")
+                    msg = f"Snyk API HTTP {exc.code} for {url}: {detail[:500]}"
+                    raise RuntimeError(msg) from exc
+                raise
+
+        run_with_retries(
+            inner,
+            max_attempts=self._settings.http_max_attempts,
+            base_backoff_s=self._settings.http_backoff_seconds,
+            retry=_is_retriable_request_failure,
+        )
+
     def iter_org_integrations(self, org_id: str) -> list[dict[str, Any]]:
         """Return integration objects for JSON:API (rest) or flat v1 payloads."""
         if self._settings.integrations_api == "rest":

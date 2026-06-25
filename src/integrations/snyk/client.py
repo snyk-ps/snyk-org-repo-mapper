@@ -86,6 +86,35 @@ def normalize_v1_projects_payload(parsed: Any) -> list[dict[str, Any]]:
     raise RuntimeError(msg)
 
 
+def normalize_rest_project(item: dict[str, Any]) -> dict[str, Any] | None:
+    """Turn a REST project resource into a flat project dict (id, name, type)."""
+    pid = item.get("id")
+    if not isinstance(pid, str) or not pid.strip():
+        return None
+    attrs = item.get("attributes")
+    if not isinstance(attrs, dict):
+        attrs = {}
+    out: dict[str, Any] = {"id": pid.strip()}
+    raw_name = attrs.get("name")
+    if isinstance(raw_name, str) and raw_name.strip():
+        out["name"] = raw_name.strip()
+    raw_type = attrs.get("type")
+    if isinstance(raw_type, str) and raw_type.strip():
+        out["type"] = raw_type.strip()
+    return out
+
+
+def _v1_project_settings_to_rest(settings: dict[str, Any]) -> dict[str, Any]:
+    """Map v1 project settings keys to REST ``attributes.settings`` shape."""
+    out: dict[str, Any] = {}
+    recurring = settings.get("recurringTests")
+    if isinstance(recurring, dict):
+        freq = recurring.get("frequency")
+        if isinstance(freq, str) and freq.strip():
+            out["recurring_tests"] = {"frequency": freq.strip()}
+    return out
+
+
 def normalize_v1_integrations_payload(parsed: Any) -> list[dict[str, Any]]:
     """Turn v1 GET /org/.../integrations JSON into a list of integration objects.
 
@@ -285,24 +314,51 @@ class SnykRestClient:
         *,
         project_type: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Return v1 project objects for an org, optionally filtered by type."""
+        """Return project objects for an org via REST, optionally filtered by type."""
+        s = self._settings
         oid = org_id.strip()
-        page_size = 100
-        from_idx = 1
+        type_filter = (
+            project_type.strip().lower()
+            if project_type is not None and project_type.strip()
+            else None
+        )
+        base_path = f"{s.rest_root}/orgs/{oid}/projects"
+        sep = "&" if "?" in base_path else "?"
+        first = f"{base_path}{sep}version={s.api_version}&limit=100"
         out: list[dict[str, Any]] = []
-        while True:
-            to_idx = from_idx + page_size - 1
-            url = f"{self._settings.v1_root}/org/{oid}/projects?from={from_idx}&to={to_idx}"
-            if project_type is not None and project_type.strip():
-                url = f"{url}&types={project_type.strip()}"
-            parsed = self._request_json_value(url, accept="application/json")
-            batch = normalize_v1_projects_payload(parsed)
-            if not batch:
-                break
-            out.extend(batch)
-            if len(batch) < page_size:
-                break
-            from_idx += page_size
+        url: str | None = first
+        seen_urls: set[str] = set()
+        while url:
+            if url in seen_urls:
+                msg = "Snyk API pagination loop detected for org projects"
+                raise RuntimeError(msg)
+            seen_urls.add(url)
+            payload = self._request_rest_json_object(url)
+            data = payload.get("data")
+            if not isinstance(data, list):
+                msg = "Unexpected org projects response: missing data array"
+                raise RuntimeError(msg)
+            for item in data:
+                if not isinstance(item, dict):
+                    continue
+                project = normalize_rest_project(item)
+                if project is None:
+                    continue
+                if type_filter is not None:
+                    raw_type = project.get("type")
+                    if (
+                        not isinstance(raw_type, str)
+                        or raw_type.strip().lower() != type_filter
+                    ):
+                        continue
+                out.append(project)
+            links = payload.get("links")
+            next_link = None
+            if isinstance(links, dict):
+                raw_next = links.get("next")
+                if isinstance(raw_next, str):
+                    next_link = raw_next
+            url = _resolve_next_url(s.rest_root, next_link)
         return out
 
     @property
@@ -440,20 +496,33 @@ class SnykRestClient:
         project_id: str,
         settings: dict[str, Any],
     ) -> None:
-        """PUT project settings via Snyk v1 API."""
+        """PATCH project settings via Snyk REST API."""
+        s = self._settings
         oid = org_id.strip()
         pid = project_id.strip()
-        url = f"{self._settings.v1_root}/org/{oid}/project/{pid}/settings"
-        body = json.dumps(settings).encode("utf-8")
+        base_path = f"{s.rest_root}/orgs/{oid}/projects/{pid}"
+        sep = "&" if "?" in base_path else "?"
+        url = f"{base_path}{sep}version={s.api_version}"
+        body = json.dumps(
+            {
+                "data": {
+                    "id": pid,
+                    "type": "project",
+                    "attributes": {
+                        "settings": _v1_project_settings_to_rest(settings),
+                    },
+                },
+            }
+        ).encode("utf-8")
         req = Request(
             url,
             data=body,
             headers={
                 "Authorization": f"token {self._settings.token}",
-                "Accept": "application/json",
-                "Content-Type": "application/json",
+                "Accept": "application/vnd.api+json",
+                "Content-Type": "application/vnd.api+json",
             },
-            method="PUT",
+            method="PATCH",
         )
 
         def inner() -> None:

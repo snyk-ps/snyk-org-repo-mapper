@@ -104,7 +104,7 @@ After `pip install -e .`, the same flows are available as `repo-mapper-discover-
 - **Stages 2.1–2.2 (Broker):** `SNYK_TOKEN`, `SNYK_TENANT_ID`, `SNYK_BROKER_INSTALL_ID`; `SNYK_GROUP_ID` recommended for org name → UUID resolution.
 - **Stage 2.3 (integration settings):** `SNYK_TOKEN`; `SNYK_INTEGRATIONS_API` must be `v1` (default). Token needs permission to edit integrations.
 - **Stage 3:** Snyk REST credentials (`SNYK_TOKEN`, `SNYK_GROUP_ID`); optional `--snyk-orgs` for a consistency check.
-- **Stage 4 (post-import cleanup):** `SNYK_TOKEN`, `SNYK_GROUP_ID`; `SNYK_INTEGRATIONS_API` must be `v1`. Token needs permission to delete projects, edit integrations, and edit org language settings. Use `--dry-run` before the first live run.
+- **Stage 4 (post-import cleanup):** `SNYK_TOKEN`, `SNYK_GROUP_ID`; `SNYK_INTEGRATIONS_API` must be `v1`. Set `SNYK_API` to your tenant API origin on single-tenant instances (e.g. `https://api.example.my.snyk.io`, no `/rest` or `/v1` suffix). Token needs permission to delete projects, edit integrations, and edit org language settings. Use `--dry-run` before the first live run.
 
 ## Installation
 
@@ -150,7 +150,7 @@ Reads `--discovery`, builds import targets (skips rows with **`is_empty: true`**
 
 ### Stage 4 — Post-import cleanup (`snyk-post-import-cleanup`)
 
-Iterates **every org** in `SNYK_GROUP_ID` and, per org: **deletes** Snyk projects with type `dockerfile`, **PUT**s recurring test frequency to `never` on all remaining projects, **PUT**s the Stage 2.3 Bitbucket Server integration settings profile, and **PATCH**es org Python language settings to **3.12** (Pip). Writes **`post-import-cleanup-report.json`** (version 2). **`--dry-run`** prints the report to stdout without DELETE, PUT, or PATCH. Requires `SNYK_INTEGRATIONS_API=v1`. **Destructive** — run dry-run first. Existing Python projects may need a re-test for scan results to reflect the new version.
+Iterates **every org** in `SNYK_GROUP_ID` and, per org: **lists** projects via the REST Projects API (type `dockerfile` filtered client-side), **deletes** those Dockerfile projects, **PATCH**es recurring test frequency to `never` on all remaining projects, **PUT**s the Stage 2.3 Bitbucket Server integration settings profile (v1 integrations API), and **PATCH**es org Python language settings to **3.12** (Pip). Writes **`post-import-cleanup-report.json`** (version 2). **`--dry-run`** prints the report to stdout without DELETE, PUT, or PATCH. Requires `SNYK_INTEGRATIONS_API=v1` for integration settings only. On single-tenant Snyk, set `SNYK_API` to your tenant origin (not `https://api.snyk.io`). **Destructive** — run dry-run first. Existing Python projects may need a re-test for scan results to reflect the new version.
 
 ## Configuration by stage
 
@@ -239,7 +239,8 @@ Uses `SNYK_TOKEN` and **`SNYK_INTEGRATIONS_API=v1`** (required). Processes only 
 | `SNYK_TOKEN` | Yes | Snyk API token. |
 | `SNYK_GROUP_ID` | Yes | UUID of the Snyk **Group** whose orgs are normalized. |
 | `SNYK_INTEGRATIONS_API` | Yes | Must be `v1` (default). Integration settings PUT is not implemented for REST. |
-| `SNYK_API`, `SNYK_API_VERSION` | No | Same as Stage 3 (REST base and version query param). |
+| `SNYK_API` | No | Snyk API **origin** only (scheme + host), e.g. `https://api.snyk.io` or `https://api.example.my.snyk.io` on single-tenant. Required for REST project list/delete/settings and org language PATCH. |
+| `SNYK_API_VERSION` | No | REST API version query parameter (date string). Default `2024-10-15`. |
 | `SNYK_HTTP_MAX_ATTEMPTS`, `SNYK_HTTP_BACKOFF_S` | No | Same as Stage 3. |
 
 | Flag | Description |
@@ -436,6 +437,59 @@ PYTHONPATH=src python src/main.py snyk-post-import-cleanup \
 
 **Exit codes:** `0` success, `1` runtime error (e.g. API failure), `2` configuration / usage / validation error.
 
+## Scripts
+
+### Branch mismatch reimport (`scripts/reimport_mismatched_targets.py`)
+
+Operational script for Scotia-style branch remediation: reads a `diff.json` artifact (output of a Bitbucket-vs-Snyk branch comparison), deletes each mismatched Snyk target, and reimports it with the correct `production_branch` via [`snyk-api-import`](https://docs.snyk.io/developer-tools/snyk-apps/tool-snyk-api-import).
+
+Each diff entry requires `apm_code` (Snyk org name), `repository_name` (target display name, e.g. `BB/my-service`), `production_branch` (desired branch), and `target_reference` (current wrong branch).
+
+**Destructive** — deletes targets and all associated projects before reimport. Run `--dry-run` in UAT first.
+
+| Variable / flag | Required | Description |
+|-----------------|----------|-------------|
+| `SNYK_TOKEN` | Yes | Snyk API token. |
+| `SNYK_GROUP_ID` | Yes | Group UUID for org name → id resolution. |
+| `--input PATH` | Yes | `diff.json` array file. |
+| `--output PATH` | No | Report JSON (default: `branch-reimport-report.json`). |
+| `--dry-run` | No | Match targets only; no DELETE or import. |
+| `--skip-import` | No | Delete only; skip `snyk-api-import`. |
+| `--repos-per-batch N` | No | Targets per import batch file (default: `50`). |
+| `--limit N` | No | Process first N entries (UAT smoke tests). |
+| `--snyk-api-import-cmd CMD` | No | Default `snyk-api-import`; use `npx snyk-api-import` if not global. |
+| `--import-batch-dir PATH` | No | Directory for batch JSON and `snyk-api-import` cwd (default: `.`). |
+
+**Operational notes:**
+
+- Install `snyk-api-import` globally or pass `--snyk-api-import-cmd 'npx snyk-api-import'`.
+- Do **not** delete or move `imported-targets.log` while an import is running — doing so causes skipped imports and 404 errors.
+- Custom branching must be enabled in the target Snyk environment before reimport.
+- Empty-target cleanup after import is handled separately in Snyk (not by this script).
+
+UAT dry-run example:
+
+```bash
+export SNYK_TOKEN='your-token'
+export SNYK_GROUP_ID='your-group-uuid'
+
+PYTHONPATH=src python scripts/reimport_mismatched_targets.py \
+  --input diff.json \
+  --dry-run \
+  --limit 5 \
+  --env-file .env
+```
+
+Live run (after UAT validation):
+
+```bash
+PYTHONPATH=src python scripts/reimport_mismatched_targets.py \
+  --input diff.json \
+  --output branch-reimport-report.json \
+  --repos-per-batch 50 \
+  --env-file .env
+```
+
 ## Testing
 
 ```bash
@@ -463,5 +517,6 @@ pytest
 | `src/common/` | Discovery document, mapper, output state, spreadsheet ingestion |
 | `src/config/` | Environment and optional `.env` |
 | `src/integrations/` | HTTP retry, Bitbucket client, Snyk REST client |
-| `src/snyk/` | Org/import builders, enrichment helpers |
+| `src/snyk/` | Org/import builders, enrichment helpers, branch mismatch reimport |
+| `scripts/` | Operational scripts (branch mismatch reimport) |
 | `tests/` | Unit tests |

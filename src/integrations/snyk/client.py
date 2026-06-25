@@ -8,7 +8,7 @@ import re
 from http.client import RemoteDisconnected
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urljoin, urlparse
+from urllib.parse import quote, urljoin, urlparse
 from urllib.request import Request, urlopen
 
 from config.snyk_settings import SnykSettings
@@ -304,6 +304,100 @@ class SnykRestClient:
                 break
             from_idx += page_size
         return out
+
+    @property
+    def token(self) -> str:
+        return self._settings.token
+
+    def iter_org_targets(
+        self,
+        org_id: str,
+        *,
+        display_name: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return REST target resource objects for an org, optionally filtered by display name."""
+        s = self._settings
+        oid = org_id.strip()
+        base_path = f"{s.rest_root}/orgs/{oid}/targets"
+        sep = "&" if "?" in base_path else "?"
+        first = f"{base_path}{sep}version={s.api_version}"
+        if display_name is not None and display_name.strip():
+            encoded = quote(display_name.strip(), safe="")
+            first = f"{first}&display_name={encoded}"
+        out: list[dict[str, Any]] = []
+        url: str | None = first
+        seen_urls: set[str] = set()
+        while url:
+            if url in seen_urls:
+                msg = "Snyk API pagination loop detected for org targets"
+                raise RuntimeError(msg)
+            seen_urls.add(url)
+            payload = self._request_rest_json_object(url)
+            data = payload.get("data")
+            if not isinstance(data, list):
+                msg = "Unexpected org targets response: missing data array"
+                raise RuntimeError(msg)
+            for item in data:
+                if isinstance(item, dict):
+                    out.append(item)
+            links = payload.get("links")
+            next_link = None
+            if isinstance(links, dict):
+                raw_next = links.get("next")
+                if isinstance(raw_next, str):
+                    next_link = raw_next
+            url = _resolve_next_url(s.rest_root, next_link)
+        return out
+
+    def get_org_target(self, org_id: str, target_id: str) -> dict[str, Any]:
+        """Return a single REST target resource object."""
+        s = self._settings
+        oid = org_id.strip()
+        tid = target_id.strip()
+        base_path = f"{s.rest_root}/orgs/{oid}/targets/{tid}"
+        sep = "&" if "?" in base_path else "?"
+        url = f"{base_path}{sep}version={s.api_version}"
+        payload = self._request_rest_json_object(url)
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            msg = "Unexpected org target response: missing data object"
+            raise RuntimeError(msg)
+        return data
+
+    def delete_org_target(self, org_id: str, target_id: str) -> None:
+        """DELETE a target via Snyk REST API."""
+        s = self._settings
+        oid = org_id.strip()
+        tid = target_id.strip()
+        base_path = f"{s.rest_root}/orgs/{oid}/targets/{tid}"
+        sep = "&" if "?" in base_path else "?"
+        url = f"{base_path}{sep}version={s.api_version}"
+        req = Request(
+            url,
+            headers={
+                "Authorization": f"token {self._settings.token}",
+                "Accept": "application/vnd.api+json",
+            },
+            method="DELETE",
+        )
+
+        def inner() -> None:
+            try:
+                with urlopen(req, timeout=self._timeout) as resp:
+                    resp.read()
+            except HTTPError as exc:
+                if not _is_retriable_request_failure(exc):
+                    detail = exc.read().decode("utf-8", errors="replace")
+                    msg = f"Snyk API HTTP {exc.code} for {url}: {detail[:500]}"
+                    raise RuntimeError(msg) from exc
+                raise
+
+        run_with_retries(
+            inner,
+            max_attempts=self._settings.http_max_attempts,
+            base_backoff_s=self._settings.http_backoff_seconds,
+            retry=_is_retriable_request_failure,
+        )
 
     def delete_org_project(self, org_id: str, project_id: str) -> None:
         """DELETE a project via Snyk REST API."""

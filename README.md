@@ -436,6 +436,59 @@ PYTHONPATH=src python src/main.py snyk-post-import-cleanup \
 
 **Exit codes:** `0` success, `1` runtime error (e.g. API failure), `2` configuration / usage / validation error.
 
+## Scripts
+
+### Branch mismatch reimport (`scripts/reimport_mismatched_targets.py`)
+
+Operational script for Scotia-style branch remediation: reads a `diff.json` artifact (output of a Bitbucket-vs-Snyk branch comparison), deletes each mismatched Snyk target, and reimports it with the correct `production_branch` via [`snyk-api-import`](https://docs.snyk.io/developer-tools/snyk-apps/tool-snyk-api-import).
+
+Each diff entry requires `apm_code` (Snyk org name), `repository_name` (target display name, e.g. `BB/my-service`), `production_branch` (desired branch), and `target_reference` (current wrong branch).
+
+**Destructive** — deletes targets and all associated projects before reimport. Run `--dry-run` in UAT first.
+
+| Variable / flag | Required | Description |
+|-----------------|----------|-------------|
+| `SNYK_TOKEN` | Yes | Snyk API token. |
+| `SNYK_GROUP_ID` | Yes | Group UUID for org name → id resolution. |
+| `--input PATH` | Yes | `diff.json` array file. |
+| `--output PATH` | No | Report JSON (default: `branch-reimport-report.json`). |
+| `--dry-run` | No | Match targets only; no DELETE or import. |
+| `--skip-import` | No | Delete only; skip `snyk-api-import`. |
+| `--repos-per-batch N` | No | Targets per import batch file (default: `50`). |
+| `--limit N` | No | Process first N entries (UAT smoke tests). |
+| `--snyk-api-import-cmd CMD` | No | Default `snyk-api-import`; use `npx snyk-api-import` if not global. |
+| `--import-batch-dir PATH` | No | Directory for batch JSON and `snyk-api-import` cwd (default: `.`). |
+
+**Operational notes:**
+
+- Install `snyk-api-import` globally or pass `--snyk-api-import-cmd 'npx snyk-api-import'`.
+- Do **not** delete or move `imported-targets.log` while an import is running — doing so causes skipped imports and 404 errors.
+- Custom branching must be enabled in the target Snyk environment before reimport.
+- Empty-target cleanup after import is handled separately in Snyk (not by this script).
+
+UAT dry-run example:
+
+```bash
+export SNYK_TOKEN='your-token'
+export SNYK_GROUP_ID='your-group-uuid'
+
+PYTHONPATH=src python scripts/reimport_mismatched_targets.py \
+  --input diff.json \
+  --dry-run \
+  --limit 5 \
+  --env-file .env
+```
+
+Live run (after UAT validation):
+
+```bash
+PYTHONPATH=src python scripts/reimport_mismatched_targets.py \
+  --input diff.json \
+  --output branch-reimport-report.json \
+  --repos-per-batch 50 \
+  --env-file .env
+```
+
 ## Testing
 
 ```bash
@@ -463,5 +516,6 @@ pytest
 | `src/common/` | Discovery document, mapper, output state, spreadsheet ingestion |
 | `src/config/` | Environment and optional `.env` |
 | `src/integrations/` | HTTP retry, Bitbucket client, Snyk REST client |
-| `src/snyk/` | Org/import builders, enrichment helpers |
+| `src/snyk/` | Org/import builders, enrichment helpers, branch mismatch reimport |
+| `scripts/` | Operational scripts (branch mismatch reimport) |
 | `tests/` | Unit tests |

@@ -19,7 +19,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Stage 4 — Delete Dockerfile projects, set recurring test frequency to never, "
-            "and apply integration settings for every org in SNYK_GROUP_ID."
+            "apply integration settings, and set org Python language version to 3.12 "
+            "for every org in SNYK_GROUP_ID."
         ),
     )
     parser.add_argument(
@@ -38,7 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Show what would change; do not DELETE projects or issue PUT requests.",
+        help="Show what would change; do not DELETE projects or issue PUT/PATCH requests.",
     )
     return parser
 
@@ -48,6 +49,7 @@ def _report_has_failures(report: dict[str, object]) -> bool:
         "dockerfile_projects",
         "recurring_test_frequency",
         "integration_settings",
+        "python_language_settings",
     ):
         bucket = report.get(section)
         if not isinstance(bucket, dict):

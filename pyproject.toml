@@ -20,6 +20,7 @@ dev = [
 [project.scripts]
 repo-mapper-discover-bitbucket = "commands.dispatch:main_discover_bitbucket"
 repo-mapper-discover-spreadsheet = "commands.dispatch:main_discover_spreadsheet"
+repo-mapper-discover-github = "commands.dispatch:main_discover_github"
 repo-mapper-snyk-orgs = "commands.dispatch:main_snyk_orgs"
 repo-mapper-snyk-broker-plan = "commands.dispatch:main_snyk_broker_plan"
 repo-mapper-snyk-broker-apply = "commands.dispatch:main_snyk_broker_apply"

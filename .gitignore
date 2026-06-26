@@ -82,7 +82,8 @@ Thumbs.db
 # .vscode/
 # .idea/
 
-openspec/
 data/
 .vscode/
 .cursor/
+
+**reference/**

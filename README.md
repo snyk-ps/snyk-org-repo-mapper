@@ -21,6 +21,16 @@ This project helps you onboard Bitbucket Server repositories into Snyk in **stag
      -o discovery.json
    ```
 
+   Or from GitHub orgs:
+
+   ```bash
+   export GITHUB_TOKEN='your-token'
+
+   PYTHONPATH=src python src/main.py discover github \
+     --orgs "org-name-1,org-name-2" \
+     -o discovery.json
+   ```
+
 2. **Stage 2 — org list** (no network):
 
    ```bash
@@ -93,18 +103,19 @@ This project helps you onboard Bitbucket Server repositories into Snyk in **stag
 
    **Destructive:** deletes Dockerfile Snyk projects in every org in the group. Run with **`--dry-run`** first to review the report on stdout. Requires token permissions to delete projects, edit integrations, and edit org language settings. Existing Python projects may need a re-test before scan results reflect Python 3.12.
 
-After `pip install -e .`, the same flows are available as `repo-mapper-discover-bitbucket`, `repo-mapper-discover-spreadsheet`, `repo-mapper-snyk-orgs`, `repo-mapper-snyk-broker-plan`, `repo-mapper-snyk-broker-apply`, `repo-mapper-snyk-broker-integration-settings`, `repo-mapper-snyk-import`, and `repo-mapper-snyk-post-import-cleanup` on your `PATH`.
+After `pip install -e .`, the same flows are available as `repo-mapper-discover-bitbucket`, `repo-mapper-discover-spreadsheet`, `repo-mapper-discover-github`, `repo-mapper-snyk-orgs`, `repo-mapper-snyk-broker-plan`, `repo-mapper-snyk-broker-apply`, `repo-mapper-snyk-broker-integration-settings`, `repo-mapper-snyk-import`, and `repo-mapper-snyk-post-import-cleanup` on your `PATH`.
 
 ## Requirements
 
 - **Python 3.12+** (see `pyproject.toml`).
 - **Stage 1 (Bitbucket):** HTTPS reachability to Bitbucket Server and a PAT that can list projects/repos and read file content.
 - **Stage 1 (spreadsheet):** `bb-repo-mapping.xlsx` plus the same `BITBUCKET_*` settings as Bitbucket discovery.
+- **Stage 1 (GitHub):** `GITHUB_TOKEN` (see [Stage 1 (GitHub)](#stage-1-github) for required scopes); `--orgs` with comma-separated org logins.
 - **Stage 2:** Paths only; no API tokens. You may pass **`--group-id`** / **`--template-org-id`** on the CLI to embed those UUIDs in `snyk-orgs.json` (still no HTTP).
 - **Stages 2.1–2.2 (Broker):** `SNYK_TOKEN`, `SNYK_TENANT_ID`, `SNYK_BROKER_INSTALL_ID`; `SNYK_GROUP_ID` recommended for org name → UUID resolution.
 - **Stage 2.3 (integration settings):** `SNYK_TOKEN`; `SNYK_INTEGRATIONS_API` must be `v1` (default). Token needs permission to edit integrations.
 - **Stage 3:** Snyk REST credentials (`SNYK_TOKEN`, `SNYK_GROUP_ID`); optional `--snyk-orgs` for a consistency check.
-- **Stage 4 (post-import cleanup):** `SNYK_TOKEN`, `SNYK_GROUP_ID`; `SNYK_INTEGRATIONS_API` must be `v1`. Token needs permission to delete projects, edit integrations, and edit org language settings. Use `--dry-run` before the first live run.
+- **Stage 4 (post-import cleanup):** `SNYK_TOKEN`, `SNYK_GROUP_ID`; `SNYK_INTEGRATIONS_API` must be `v1`. Set `SNYK_API` to your tenant API origin on single-tenant instances (e.g. `https://api.example.my.snyk.io`, no `/rest` or `/v1` suffix). Token needs permission to delete projects, edit integrations, and edit org language settings. Use `--dry-run` before the first live run.
 
 ## Installation
 
@@ -120,13 +131,15 @@ pip install -e ".[dev]"
 
 ## Workflow
 
-### Stage 1 — `discover bitbucket` or `discover spreadsheet`
+### Stage 1 — `discover bitbucket`, `discover spreadsheet`, or `discover github`
 
 **Bitbucket** walks projects and repositories, checks each repo for commits (zero commits → `is_empty: true`), records **`last_committer_name`** and **`last_committer_email`** from the latest commit when not empty (API `committer`, falling back to `author`), **`last_commit_date`** as UTC ISO-8601 from `committerTimestamp` (falling back to `authorTimestamp`), reads a YAML file from non-empty repos (see [YAML format](#yaml-file-format)), merges AppSec fields with API metadata, and either prints a JSON **array of rows** to stdout or writes **discovery JSON** with `-o` / `--output`. With `-o`, also writes **`bitbucket-empty-repos.json`** by default listing empty repositories (override with `--empty-repos-output`; disable with `--no-empty-repos-output`).
 
 **Spreadsheet** reads `bb-repo-mapping.xlsx` (project keys + semicolon-delimited repo slugs), queries Bitbucket per repo for YAML-derived APM and full row metadata (see [Stage 1 (spreadsheet)](#stage-1-spreadsheet)), and writes discovery JSON with `source: bitbucket`.
 
-Discovery is the handoff artifact for Stages 2 and 3. Shape: `version`, `source` (`bitbucket` or `spreadsheet`), `rows`, and optional `checkpoint` for resume (Bitbucket file output). Legacy **primary mapping** files (wrapper without `source`, or a bare array) are still accepted as `--discovery` input in Stages 2–3; `source` is treated as `bitbucket` for compatibility.
+**GitHub** lists repositories for each org in **`--orgs`** (comma-separated logins), applies the same empty-repo and committer rules via the GitHub REST API, reads AppSec YAML from non-empty repos, and writes discovery JSON with **`source: github`**. With `-o`, also writes **`github-empty-repos.json`** by default (same override/disable flags as Bitbucket). There is no spreadsheet ingress for GitHub.
+
+Discovery is the handoff artifact for Stages 2 and 3. Shape: `version`, `source` (`bitbucket`, `spreadsheet`, or `github`), `rows`, and optional `checkpoint` for resume (file output). Legacy **primary mapping** files (wrapper without `source`, or a bare array) are still accepted as `--discovery` input in Stages 2–3; `source` is treated as `bitbucket` for compatibility.
 
 ### Stage 2 — `snyk-orgs`
 
@@ -150,7 +163,7 @@ Reads `--discovery`, builds import targets (skips rows with **`is_empty: true`**
 
 ### Stage 4 — Post-import cleanup (`snyk-post-import-cleanup`)
 
-Iterates **every org** in `SNYK_GROUP_ID` and, per org: **deletes** Snyk projects with type `dockerfile`, **PUT**s recurring test frequency to `never` on all remaining projects, **PUT**s the Stage 2.3 Bitbucket Server integration settings profile, and **PATCH**es org Python language settings to **3.12** (Pip). Writes **`post-import-cleanup-report.json`** (version 2). **`--dry-run`** prints the report to stdout without DELETE, PUT, or PATCH. Requires `SNYK_INTEGRATIONS_API=v1`. **Destructive** — run dry-run first. Existing Python projects may need a re-test for scan results to reflect the new version.
+Iterates **every org** in `SNYK_GROUP_ID` and, per org: **lists** projects via the REST Projects API (type `dockerfile` filtered client-side), **deletes** those Dockerfile projects, **PATCH**es recurring test frequency to `never` on all remaining projects, **PUT**s the Stage 2.3 Bitbucket Server integration settings profile (v1 integrations API), and **PATCH**es org Python language settings to **3.12** (Pip). Writes **`post-import-cleanup-report.json`** (version 2). **`--dry-run`** prints the report to stdout without DELETE, PUT, or PATCH. Requires `SNYK_INTEGRATIONS_API=v1` for integration settings only. On single-tenant Snyk, set `SNYK_API` to your tenant origin (not `https://api.snyk.io`). **Destructive** — run dry-run first. Existing Python projects may need a re-test for scan results to reflect the new version.
 
 ## Configuration by stage
 
@@ -178,6 +191,40 @@ Uses the same **`BITBUCKET_*`** variables as Bitbucket discovery (see above), in
 - **APM:** Read from each repo’s AppSec YAML via Bitbucket (not from the spreadsheet).
 - **Empty repos:** Zero commits, or **no default branch** in Bitbucket metadata → `is_empty: true` (skipped in Stage 3).
 - **Synthetic default branch ref** (when normalizing API metadata only): **`master`**, not `main`.
+
+### Stage 1 (GitHub)
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `GITHUB_TOKEN` | Yes | Personal access token; sent as `Authorization: Bearer …`. Do not commit or log. |
+| `GITHUB_API_URL` | No | GitHub REST API base URL. Default `https://api.github.com`. GitHub Enterprise Server: `{host}/api/v3`. |
+| `GITHUB_FILE_PATH` | No | YAML path **inside each repo**; default `appsec.yaml`. |
+| `GITHUB_HTTP_RETRIES` | No | Max attempts per HTTP call (including first). Default `5`. |
+| `GITHUB_HTTP_BACKOFF_S` | No | Base seconds for exponential backoff. Default `1.0`. |
+| `GITHUB_FLUSH_INTERVAL` | No | When using `-o`, flush discovery every **N** new repos. Default `1`; overridable with `--flush-interval`. |
+
+| Flag | Description |
+|------|-------------|
+| `--orgs ORG1,ORG2` | **Required.** Comma-separated GitHub organization logins to crawl. |
+| `--empty-repos-output PATH` | Write empty-repository list JSON (default: `github-empty-repos.json` when `-o` is set). |
+| `--no-empty-repos-output` | Do not write the empty-repos file even when `-o` is set. |
+
+- **Empty repos:** Zero commits, or **no default branch** in GitHub metadata → `is_empty: true` (skipped in Stage 3).
+- **Row paths:** `repository_path` is `{org_login}/{repo_name}`; `bitbucket_project_name` holds the org display name (legacy field name for schema compatibility).
+
+**Token permissions:** Discovery is read-only. It calls `GET /orgs/{org}`, `GET /orgs/{org}/repos`, `GET /repos/{owner}/{repo}/commits`, and `GET /repos/{owner}/{repo}/contents/{path}`. The token owner must be a **member** of each org in `--orgs` with access to the repositories being crawled.
+
+**Fine-grained PAT (GitHub.com):** Grant access to the target org(s). Repository permissions: **Contents** (Read-only) and **Metadata** (Read-only). No write or admin permissions are required.
+
+**Classic PAT:**
+
+| Scope | When needed |
+|-------|-------------|
+| `repo` | Private repositories in the org |
+| `read:org` | Listing org repositories via the API |
+| `public_repo` | Public repositories only |
+
+For a typical private-org crawl, use **`repo`** and **`read:org`**. Do not commit or log the token.
 
 ### Stage 2
 
@@ -239,7 +286,8 @@ Uses `SNYK_TOKEN` and **`SNYK_INTEGRATIONS_API=v1`** (required). Processes only 
 | `SNYK_TOKEN` | Yes | Snyk API token. |
 | `SNYK_GROUP_ID` | Yes | UUID of the Snyk **Group** whose orgs are normalized. |
 | `SNYK_INTEGRATIONS_API` | Yes | Must be `v1` (default). Integration settings PUT is not implemented for REST. |
-| `SNYK_API`, `SNYK_API_VERSION` | No | Same as Stage 3 (REST base and version query param). |
+| `SNYK_API` | No | Snyk API **origin** only (scheme + host), e.g. `https://api.snyk.io` or `https://api.example.my.snyk.io` on single-tenant. Required for REST project list/delete/settings and org language PATCH. |
+| `SNYK_API_VERSION` | No | REST API version query parameter (date string). Default `2024-10-15`. |
 | `SNYK_HTTP_MAX_ATTEMPTS`, `SNYK_HTTP_BACKOFF_S` | No | Same as Stage 3. |
 
 | Flag | Description |
@@ -259,6 +307,7 @@ If you omit `--env-file`, the CLI loads `.env` from the **current working direct
 |---------|---------|-----------|
 | `discover bitbucket` | Bitbucket → discovery or stdout rows | `-o`, `--empty-repos-output`, `--no-empty-repos-output`, `--env-file`, `--max-repos`, `--flush-interval` |
 | `discover spreadsheet` | `bb-repo-mapping.xlsx` + Bitbucket → discovery | `-i`, `-o`, `--env-file`, `--max-repos`, `--flush-interval`, empty-repos flags |
+| `discover github` | GitHub orgs → discovery | `--orgs`, `-o`, `--env-file`, `--max-repos`, `--flush-interval`, empty-repos flags |
 | `snyk-orgs` | discovery → `snyk-orgs.json` | `--discovery`, `--output`, `--group-id`, `--template-org-id`, `--dry-run` |
 | `snyk-broker-plan` | snyk-orgs → broker-org-plan.json | `--snyk-orgs`, `--output`, `--tenant-id`, `--install-id`, `--env-file`, `--dry-run` |
 | `snyk-broker-apply` | plan → broker-org-apply-report.json | `--plan`, `--output`, `--env-file`, `--dry-run` |
@@ -270,6 +319,7 @@ If you omit `--env-file`, the CLI loads `.env` from the **current working direct
 PYTHONPATH=src python src/main.py -h
 PYTHONPATH=src python src/main.py discover -h
 PYTHONPATH=src python src/main.py discover bitbucket -h
+PYTHONPATH=src python src/main.py discover github -h
 PYTHONPATH=src python src/main.py snyk-orgs -h
 PYTHONPATH=src python src/main.py snyk-import -h
 PYTHONPATH=src python src/main.py snyk-post-import-cleanup -h
@@ -411,6 +461,18 @@ PYTHONPATH=src python src/main.py discover spreadsheet \
   --env-file .env
 ```
 
+GitHub org discovery:
+
+```bash
+export GITHUB_TOKEN='your-token'
+export GITHUB_FILE_PATH='security/appsec.yaml'
+
+PYTHONPATH=src python src/main.py discover github \
+  --orgs "org-name-1,org-name-2" \
+  -o discovery.json \
+  --flush-interval 10
+```
+
 Batched import (250 targets, 100 per file → three JSON files):
 
 ```bash
@@ -436,6 +498,59 @@ PYTHONPATH=src python src/main.py snyk-post-import-cleanup \
 
 **Exit codes:** `0` success, `1` runtime error (e.g. API failure), `2` configuration / usage / validation error.
 
+## Scripts
+
+### Branch mismatch reimport (`scripts/reimport_mismatched_targets.py`)
+
+Operational script for Scotia-style branch remediation: reads a `diff.json` artifact (output of a Bitbucket-vs-Snyk branch comparison), deletes each mismatched Snyk target, and reimports it with the correct `production_branch` via [`snyk-api-import`](https://docs.snyk.io/developer-tools/snyk-apps/tool-snyk-api-import).
+
+Each diff entry requires `apm_code` (Snyk org name), `repository_name` (target display name, e.g. `BB/my-service`), `production_branch` (desired branch), and `target_reference` (current wrong branch).
+
+**Destructive** — deletes targets and all associated projects before reimport. Run `--dry-run` in UAT first.
+
+| Variable / flag | Required | Description |
+|-----------------|----------|-------------|
+| `SNYK_TOKEN` | Yes | Snyk API token. |
+| `SNYK_GROUP_ID` | Yes | Group UUID for org name → id resolution. |
+| `--input PATH` | Yes | `diff.json` array file. |
+| `--output PATH` | No | Report JSON (default: `branch-reimport-report.json`). |
+| `--dry-run` | No | Match targets only; no DELETE or import. |
+| `--skip-import` | No | Delete only; skip `snyk-api-import`. |
+| `--repos-per-batch N` | No | Targets per import batch file (default: `50`). |
+| `--limit N` | No | Process first N entries (UAT smoke tests). |
+| `--snyk-api-import-cmd CMD` | No | Default `snyk-api-import`; use `npx snyk-api-import` if not global. |
+| `--import-batch-dir PATH` | No | Directory for batch JSON and `snyk-api-import` cwd (default: `.`). |
+
+**Operational notes:**
+
+- Install `snyk-api-import` globally or pass `--snyk-api-import-cmd 'npx snyk-api-import'`.
+- Do **not** delete or move `imported-targets.log` while an import is running — doing so causes skipped imports and 404 errors.
+- Custom branching must be enabled in the target Snyk environment before reimport.
+- Empty-target cleanup after import is handled separately in Snyk (not by this script).
+
+UAT dry-run example:
+
+```bash
+export SNYK_TOKEN='your-token'
+export SNYK_GROUP_ID='your-group-uuid'
+
+PYTHONPATH=src python scripts/reimport_mismatched_targets.py \
+  --input diff.json \
+  --dry-run \
+  --limit 5 \
+  --env-file .env
+```
+
+Live run (after UAT validation):
+
+```bash
+PYTHONPATH=src python scripts/reimport_mismatched_targets.py \
+  --input diff.json \
+  --output branch-reimport-report.json \
+  --repos-per-batch 50 \
+  --env-file .env
+```
+
 ## Testing
 
 ```bash
@@ -453,6 +568,7 @@ pytest
 | `src/main.py` | Entry: dispatches pipeline stage commands |
 | `src/commands/dispatch.py` | Router and console-script entrypoints |
 | `src/commands/bitbucket_cli.py` | Stage 1 Bitbucket |
+| `src/commands/github_cli.py` | Stage 1 GitHub |
 | `src/commands/spreadsheet_cli.py` | Stage 1 spreadsheet |
 | `src/commands/snyk_orgs_cli.py` | Stage 2 |
 | `src/commands/snyk_broker_plan_cli.py` | Stage 2.1 Broker Plan |
@@ -462,6 +578,7 @@ pytest
 | `src/commands/snyk_post_import_cleanup_cli.py` | Stage 4 post-import cleanup |
 | `src/common/` | Discovery document, mapper, output state, spreadsheet ingestion |
 | `src/config/` | Environment and optional `.env` |
-| `src/integrations/` | HTTP retry, Bitbucket client, Snyk REST client |
-| `src/snyk/` | Org/import builders, enrichment helpers |
+| `src/integrations/` | HTTP retry, Bitbucket client, GitHub client, Snyk REST client |
+| `src/snyk/` | Org/import builders, enrichment helpers, branch mismatch reimport |
+| `scripts/` | Operational scripts (branch mismatch reimport) |
 | `tests/` | Unit tests |

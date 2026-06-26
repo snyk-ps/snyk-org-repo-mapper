@@ -24,7 +24,7 @@ def test_build_empty_repos_document_filters_and_sorts() -> None:
             "is_empty": False,
         },
     ]
-    doc = build_empty_repos_document(rows)
+    doc = build_empty_repos_document(rows, source="bitbucket")
     assert doc["version"] == 1
     assert doc["source"] == "bitbucket"
     assert len(doc["repositories"]) == 2
@@ -33,5 +33,5 @@ def test_build_empty_repos_document_filters_and_sorts() -> None:
 
 
 def test_build_empty_repos_document_empty_list() -> None:
-    doc = build_empty_repos_document([])
+    doc = build_empty_repos_document([], source="bitbucket")
     assert doc["repositories"] == []

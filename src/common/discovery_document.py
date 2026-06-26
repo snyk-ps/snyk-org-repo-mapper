@@ -11,9 +11,9 @@ from common.output_state import assert_safe_filesystem_path, parse_primary_json_
 
 DISCOVERY_FORMAT_VERSION = 1
 
-DiscoverySource = Literal["bitbucket", "spreadsheet"]
+DiscoverySource = Literal["bitbucket", "spreadsheet", "github"]
 
-ALLOWED_SOURCES: frozenset[str] = frozenset({"bitbucket", "spreadsheet"})
+ALLOWED_SOURCES: frozenset[str] = frozenset({"bitbucket", "spreadsheet", "github"})
 
 
 def build_discovery_document(

@@ -13,6 +13,10 @@ def test_dispatch_discover_help() -> None:
     assert main(["discover", "-h"]) == 0
 
 
+def test_dispatch_discover_github_help() -> None:
+    assert main(["discover", "github", "-h"]) == 0
+
+
 def test_dispatch_unknown_command() -> None:
     assert main(["unknown-cmd"]) == 2
 

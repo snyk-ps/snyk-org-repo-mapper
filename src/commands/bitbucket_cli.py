@@ -139,7 +139,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             text = json.dumps(rows, indent=2, ensure_ascii=False) + "\n"
             sys.stdout.write(text)
             if empty_repos_path is not None:
-                write_empty_repos_document(empty_repos_path, rows)
+                write_empty_repos_document(empty_repos_path, rows, source="bitbucket")
                 log_empty_repo_summary(rows, empty_repos_path)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)

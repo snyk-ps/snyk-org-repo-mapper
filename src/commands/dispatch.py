@@ -6,6 +6,7 @@ import sys
 from typing import Sequence
 
 from commands.bitbucket_cli import main as bitbucket_main
+from commands.github_cli import main as github_main
 from commands.snyk_broker_apply_cli import main as snyk_broker_apply_main
 from commands.snyk_broker_integration_settings_cli import (
     main as snyk_broker_integration_settings_main,
@@ -26,6 +27,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "Snyk onboarding (run in order):\n"
             "  discover bitbucket       Stage 1 — Bitbucket Server → discovery.json\n"
             "  discover spreadsheet     Stage 1 — bb-repo-mapping.xlsx + Bitbucket → discovery.json\n"
+            "  discover github          Stage 1 — GitHub orgs → discovery.json\n"
             "  snyk-orgs                Stage 2 — discovery.json → snyk-orgs.json\n"
             "  snyk-broker-plan         Stage 2.1 — Broker Plan → broker-org-plan.json\n"
             "  snyk-broker-apply        Stage 2.2 — Broker Apply → broker integrations (POST)\n"
@@ -40,9 +42,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if cmd == "discover":
         if not rest or rest[0] in ("-h", "--help"):
             print(
-                "Usage: python main.py discover {bitbucket|spreadsheet} [options...]\n"
+                "Usage: python main.py discover {bitbucket|spreadsheet|github} [options...]\n"
                 "  discover bitbucket      — same flags as before (see --help)\n"
-                "  discover spreadsheet    — -i bb-repo-mapping.xlsx; requires BITBUCKET_* (see --help)",
+                "  discover spreadsheet    — -i bb-repo-mapping.xlsx; requires BITBUCKET_* (see --help)\n"
+                "  discover github         — --orgs org1,org2; requires GITHUB_TOKEN (see --help)",
                 file=sys.stderr,
             )
             return 0 if rest and rest[0] in ("-h", "--help") else 2
@@ -51,7 +54,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             return bitbucket_main(tail)
         if target == "spreadsheet":
             return spreadsheet_main(tail)
-        print(f"Unknown discover target {target!r}. Use bitbucket or spreadsheet.", file=sys.stderr)
+        if target == "github":
+            return github_main(tail)
+        print(
+            f"Unknown discover target {target!r}. Use bitbucket, spreadsheet, or github.",
+            file=sys.stderr,
+        )
         return 2
 
     if cmd == "snyk-orgs":
@@ -84,6 +92,11 @@ def main_discover_bitbucket() -> int:
 def main_discover_spreadsheet() -> int:
     """Console script: ``repo-mapper-discover-spreadsheet``."""
     return main(["discover", "spreadsheet"] + sys.argv[1:])
+
+
+def main_discover_github() -> int:
+    """Console script: ``repo-mapper-discover-github``."""
+    return main(["discover", "github"] + sys.argv[1:])
 
 
 def main_snyk_orgs() -> int:

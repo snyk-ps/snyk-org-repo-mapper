@@ -1,16 +1,24 @@
-"""Build bitbucket-empty-repos.json from discovery rows."""
+"""Build empty-repositories sidecar JSON from discovery rows."""
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
 
+from common.discovery_document import DiscoverySource
 from common.mapper import row_is_empty
 from common.output_state import atomic_write_json
 
 
 EMPTY_REPOS_VERSION = 1
 DEFAULT_EMPTY_REPOS_FILENAME = "bitbucket-empty-repos.json"
+DEFAULT_GITHUB_EMPTY_REPOS_FILENAME = "github-empty-repos.json"
+
+
+def default_empty_repos_filename(source: DiscoverySource) -> str:
+    if source == "github":
+        return DEFAULT_GITHUB_EMPTY_REPOS_FILENAME
+    return DEFAULT_EMPTY_REPOS_FILENAME
 
 
 def _empty_repo_entry(row: dict[str, Any]) -> dict[str, str] | None:
@@ -33,7 +41,11 @@ def _empty_repo_entry(row: dict[str, Any]) -> dict[str, str] | None:
     }
 
 
-def build_empty_repos_document(rows: list[dict[str, Any]]) -> dict[str, Any]:
+def build_empty_repos_document(
+    rows: list[dict[str, Any]],
+    *,
+    source: DiscoverySource,
+) -> dict[str, Any]:
     """Build version 1 empty-repositories JSON from discovery rows."""
     repositories: list[dict[str, str]] = []
     for row in rows:
@@ -45,11 +57,16 @@ def build_empty_repos_document(rows: list[dict[str, Any]]) -> dict[str, Any]:
     repositories.sort(key=lambda item: item["repository_path"])
     return {
         "version": EMPTY_REPOS_VERSION,
-        "source": "bitbucket",
+        "source": source,
         "repositories": repositories,
     }
 
 
-def write_empty_repos_document(path: Path, rows: list[dict[str, Any]]) -> None:
+def write_empty_repos_document(
+    path: Path,
+    rows: list[dict[str, Any]],
+    *,
+    source: DiscoverySource,
+) -> None:
     """Atomically write empty-repositories JSON."""
-    atomic_write_json(path, build_empty_repos_document(rows))
+    atomic_write_json(path, build_empty_repos_document(rows, source=source))

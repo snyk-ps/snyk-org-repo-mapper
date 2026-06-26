@@ -1,4 +1,4 @@
-"""Command-line interface: Stage 1 Bitbucket discovery (writes discovery JSON)."""
+"""Command-line interface: Stage 1 GitHub discovery (writes discovery JSON)."""
 
 from __future__ import annotations
 
@@ -14,18 +14,34 @@ from commands.discovery_helpers import (
     run_discovery_with_file_output,
 )
 from common.empty_repos_document import write_empty_repos_document
-from common.mapper import iter_mapping
-from config import load_dotenv_file, load_settings
-from integrations.bitbucket import BitbucketServerClient
+from common.github_mapper import iter_github_mapping
+from config import load_dotenv_file
+from config.github_settings import load_github_settings
+from integrations.github import GitHubClient
+
+
+def parse_org_list(raw: str) -> list[str]:
+    orgs = [part.strip() for part in raw.split(",")]
+    orgs = [org for org in orgs if org]
+    if not orgs:
+        msg = "--orgs must include at least one organization login"
+        raise ValueError(msg)
+    return orgs
 
 
 def build_parser() -> argparse.ArgumentParser:
     """Construct the CLI argument parser."""
     parser = argparse.ArgumentParser(
         description=(
-            "Stage 1 (Bitbucket): list projects and repositories, read AppSec YAML per repo, "
-            "and write discovery JSON for later snyk-orgs / snyk-import stages."
+            "Stage 1 (GitHub): list repositories for one or more orgs, read AppSec YAML "
+            "per repo, and write discovery JSON for later snyk-orgs / snyk-import stages."
         ),
+    )
+    parser.add_argument(
+        "--orgs",
+        required=True,
+        metavar="ORG1,ORG2",
+        help="Comma-separated GitHub organization logins to crawl.",
     )
     parser.add_argument(
         "-o",
@@ -56,7 +72,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="N",
         help=(
-            "Write discovery every N new repositories (default: BITBUCKET_FLUSH_INTERVAL "
+            "Write discovery every N new repositories (default: GITHUB_FLUSH_INTERVAL "
             "or 1). Applies when --output is set."
         ),
     )
@@ -65,33 +81,30 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="PATH",
         help=(
-            "Write empty-repository list JSON. Default: bitbucket-empty-repos.json "
+            "Write empty-repository list JSON. Default: github-empty-repos.json "
             "when -o/--output is set."
         ),
     )
     parser.add_argument(
         "--no-empty-repos-output",
         action="store_true",
-        help="Do not write bitbucket-empty-repos.json even when -o/--output is set.",
+        help="Do not write github-empty-repos.json even when -o/--output is set.",
     )
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run Bitbucket discovery CLI."""
-    raw = list(argv) if argv is not None else sys.argv[1:]
-    if "-i" in raw or "--input" in raw:
-        print(
-            "Spreadsheet discovery uses: `python main.py discover spreadsheet …` "
-            "(or the `repo-mapper-discover-spreadsheet` console script). "
-            "This command is Bitbucket-only and has no --input.",
-            file=sys.stderr,
-        )
+    """Run GitHub discovery CLI."""
     parser = build_parser()
-    args = parser.parse_args(raw)
+    try:
+        args = parser.parse_args(list(argv) if argv is not None else None)
+    except SystemExit as exc:
+        code = exc.code
+        return int(code) if isinstance(code, int) else 2
     load_dotenv_file(args.env_file)
     try:
-        settings = load_settings()
+        settings = load_github_settings()
+        org_logins = parse_org_list(args.orgs)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2
@@ -103,9 +116,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("flush interval must be >= 1", file=sys.stderr)
         return 2
 
-    client = BitbucketServerClient(
-        settings.bitbucket_url,
-        settings.bitbucket_pat,
+    client = GitHubClient(
+        settings.api_url,
+        settings.token,
         http_max_attempts=settings.http_max_attempts,
         http_backoff_seconds=settings.http_backoff_seconds,
     )
@@ -113,25 +126,29 @@ def main(argv: Sequence[str] | None = None) -> int:
         output_path=args.output,
         empty_repos_output=args.empty_repos_output,
         no_empty_repos_output=args.no_empty_repos_output,
+        source="github",
     )
     try:
         if args.output:
             run_discovery_with_file_output(
                 output_path=Path(args.output),
-                row_iter_factory=lambda completed: iter_mapping(
+                row_iter_factory=lambda completed: iter_github_mapping(
                     client,
                     settings.file_path,
+                    org_logins,
                     completed_keys=completed,
                     max_repos=args.max_repos,
                 ),
                 flush_interval=flush_interval,
                 empty_repos_path=empty_repos_path,
+                source="github",
             )
         else:
             rows = list(
-                iter_mapping(
+                iter_github_mapping(
                     client,
                     settings.file_path,
+                    org_logins,
                     completed_keys=set(),
                     max_repos=args.max_repos,
                 )
@@ -139,7 +156,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             text = json.dumps(rows, indent=2, ensure_ascii=False) + "\n"
             sys.stdout.write(text)
             if empty_repos_path is not None:
-                write_empty_repos_document(empty_repos_path, rows, source="bitbucket")
+                write_empty_repos_document(empty_repos_path, rows, source="github")
                 log_empty_repo_summary(rows, empty_repos_path)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)

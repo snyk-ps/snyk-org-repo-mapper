@@ -48,3 +48,13 @@ def test_load_resume_rows_legacy(tmp_path: Path) -> None:
 def test_parse_rejects_unknown_version() -> None:
     with pytest.raises(ValueError, match="Unsupported discovery"):
         parse_discovery_payload({"version": 99, "source": "bitbucket", "rows": []})
+
+
+def test_build_and_parse_github_discovery() -> None:
+    rows = [{"repository_path": "acme/svc", "apm_code": "X"}]
+    doc = build_discovery_document(rows, "github", last_completed=("acme", "svc"))
+    assert doc["source"] == "github"
+    r, src, ck = parse_discovery_payload(doc)
+    assert r == rows
+    assert src == "github"
+    assert ck == ("acme", "svc")

@@ -14,7 +14,7 @@ from snyk.python_language_settings_defaults import (
     build_python_org_language_settings_payload,
 )
 
-POST_IMPORT_CLEANUP_REPORT_VERSION = 2
+POST_IMPORT_CLEANUP_REPORT_VERSION = 3
 RECURRING_TEST_FREQUENCY_NEVER = {"recurringTests": {"frequency": "never"}}
 
 
@@ -26,6 +26,66 @@ def _project_field(project: dict[str, Any], *keys: str) -> str | None:
     return None
 
 
+def _owner_remediation_base_entry(
+    *,
+    org_id: str,
+    project_id: str,
+    project_name: str | None,
+    project_type: str | None,
+) -> dict[str, Any]:
+    return {
+        "org_id": org_id,
+        "project_id": project_id,
+        "project_name": project_name,
+        "project_type": project_type,
+    }
+
+
+def _remediate_project_owner(
+    client: SnykRestClient,
+    *,
+    org_id: str,
+    project_id: str,
+    project_name: str | None,
+    project_type: str | None,
+    prior_owner_id: str | None,
+    transition_user_id: str,
+    dry_run: bool,
+    owner_cleared: list[dict[str, Any]],
+    owner_restored: list[dict[str, Any]],
+    owner_skipped: list[dict[str, Any]],
+    owner_failed: list[dict[str, Any]],
+) -> None:
+    """Restore pre-PATCH ownership after recurring-test PATCH assigned transition user."""
+    base_entry = _owner_remediation_base_entry(
+        org_id=org_id,
+        project_id=project_id,
+        project_name=project_name,
+        project_type=project_type,
+    )
+
+    if dry_run:
+        if prior_owner_id == transition_user_id:
+            owner_skipped.append({**base_entry, "reason": "already_transition_user"})
+        else:
+            owner_skipped.append({**base_entry, "reason": "dry_run"})
+        return
+
+    if prior_owner_id == transition_user_id:
+        owner_skipped.append({**base_entry, "reason": "already_transition_user"})
+        return
+
+    try:
+        if prior_owner_id is None:
+            client.clear_project_owner(org_id, project_id)
+            owner_cleared.append(base_entry)
+        else:
+            client.set_project_owner(org_id, project_id, prior_owner_id)
+            owner_restored.append({**base_entry, "prior_owner_id": prior_owner_id})
+    except RuntimeError as exc:
+        owner_failed.append({**base_entry, "error": str(exc)})
+
+
 def run_post_import_cleanup(
     client: SnykRestClient,
     *,
@@ -34,6 +94,7 @@ def run_post_import_cleanup(
 ) -> dict[str, Any]:
     """Normalize every org in the configured Snyk group."""
     group_id = client.group_id
+    transition_user_id = user_id.strip()
 
     dockerfile_deleted: list[dict[str, Any]] = []
     dockerfile_skipped: list[dict[str, Any]] = []
@@ -42,6 +103,11 @@ def run_post_import_cleanup(
     frequency_updated: list[dict[str, Any]] = []
     frequency_skipped: list[dict[str, Any]] = []
     frequency_failed: list[dict[str, Any]] = []
+
+    owner_cleared: list[dict[str, Any]] = []
+    owner_restored: list[dict[str, Any]] = []
+    owner_skipped: list[dict[str, Any]] = []
+    owner_failed: list[dict[str, Any]] = []
 
     integration_updated: list[dict[str, Any]] = []
     integration_skipped: list[dict[str, Any]] = []
@@ -98,8 +164,16 @@ def run_post_import_cleanup(
             project_id = _project_field(project, "id")
             project_name = _project_field(project, "name", "projectName")
             project_type = _project_field(project, "type")
+            prior_owner_id = _project_field(project, "owner_id")
             if not project_id:
                 continue
+
+            owner_base = _owner_remediation_base_entry(
+                org_id=org_id,
+                project_id=project_id,
+                project_name=project_name,
+                project_type=project_type,
+            )
 
             if dry_run:
                 frequency_skipped.append(
@@ -111,6 +185,20 @@ def run_post_import_cleanup(
                         "reason": "dry_run",
                     }
                 )
+                _remediate_project_owner(
+                    client,
+                    org_id=org_id,
+                    project_id=project_id,
+                    project_name=project_name,
+                    project_type=project_type,
+                    prior_owner_id=prior_owner_id,
+                    transition_user_id=transition_user_id,
+                    dry_run=True,
+                    owner_cleared=owner_cleared,
+                    owner_restored=owner_restored,
+                    owner_skipped=owner_skipped,
+                    owner_failed=owner_failed,
+                )
                 continue
 
             try:
@@ -118,7 +206,7 @@ def run_post_import_cleanup(
                     org_id,
                     project_id,
                     RECURRING_TEST_FREQUENCY_NEVER,
-                    user_id,
+                    transition_user_id,
                 )
                 frequency_updated.append(
                     {
@@ -127,6 +215,20 @@ def run_post_import_cleanup(
                         "project_name": project_name,
                         "project_type": project_type,
                     }
+                )
+                _remediate_project_owner(
+                    client,
+                    org_id=org_id,
+                    project_id=project_id,
+                    project_name=project_name,
+                    project_type=project_type,
+                    prior_owner_id=prior_owner_id,
+                    transition_user_id=transition_user_id,
+                    dry_run=False,
+                    owner_cleared=owner_cleared,
+                    owner_restored=owner_restored,
+                    owner_skipped=owner_skipped,
+                    owner_failed=owner_failed,
                 )
             except RuntimeError as exc:
                 error = str(exc)
@@ -140,6 +242,9 @@ def run_post_import_cleanup(
                             "reason": "project_not_found",
                         }
                     )
+                    owner_skipped.append(
+                        {**owner_base, "reason": "frequency_patch_skipped"}
+                    )
                 else:
                     frequency_failed.append(
                         {
@@ -149,6 +254,9 @@ def run_post_import_cleanup(
                             "project_type": project_type,
                             "error": error,
                         }
+                    )
+                    owner_skipped.append(
+                        {**owner_base, "reason": "frequency_patch_failed"}
                     )
 
         outcome = apply_bitbucket_integration_settings_to_org(
@@ -215,6 +323,7 @@ def run_post_import_cleanup(
     return {
         "version": POST_IMPORT_CLEANUP_REPORT_VERSION,
         "group_id": group_id,
+        "transition_user_id": transition_user_id,
         "settings_profile": SETTINGS_PROFILE_ID,
         "python_version": PYTHON_LANGUAGE_VERSION,
         "python_language_settings_profile": PYTHON_LANGUAGE_SETTINGS_PROFILE_ID,
@@ -227,6 +336,12 @@ def run_post_import_cleanup(
             "updated": frequency_updated,
             "skipped": frequency_skipped,
             "failed": frequency_failed,
+        },
+        "project_owner_remediation": {
+            "cleared": owner_cleared,
+            "restored": owner_restored,
+            "skipped": owner_skipped,
+            "failed": owner_failed,
         },
         "integration_settings": {
             "updated": integration_updated,

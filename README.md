@@ -165,7 +165,7 @@ Reads `--discovery`, builds import targets (skips rows with **`is_empty: true`**
 
 ### Stage 4 — Post-import cleanup (`snyk-post-import-cleanup`)
 
-Iterates **every org** in `SNYK_GROUP_ID` and, per org: **lists** projects via the REST Projects API (type `dockerfile` filtered client-side), **deletes** those Dockerfile projects, **PATCH**es recurring test frequency to `never` on all remaining projects (requires `SNYK_USER_ID` as project owner), **PUT**s the Stage 2.3 Bitbucket Server integration settings profile (v1 integrations API), and **PATCH**es org Python language settings to **3.12** (Pip). Writes **`post-import-cleanup-report.json`** (version 2). **`--dry-run`** prints the report to stdout without DELETE, PUT, or PATCH. Requires `SNYK_INTEGRATIONS_API=v1` for integration settings only. On single-tenant Snyk, set `SNYK_API` to your tenant origin (not `https://api.snyk.io`). **Destructive** — run dry-run first. Existing Python projects may need a re-test for scan results to reflect the new version.
+Iterates **every org** in `SNYK_GROUP_ID` and, per org: **lists** projects via the REST Projects API (type `dockerfile` filtered client-side), **deletes** those Dockerfile projects, **PATCH**es recurring test frequency to `never` on all remaining projects (REST PATCH requires `SNYK_USER_ID` in `relationships.owner`), **remediates project ownership** so pre-PATCH owners are preserved (unassigned projects stay unassigned; other owners are restored), **PUT**s the Stage 2.3 Bitbucket Server integration settings profile (v1 integrations API), and **PATCH**es org Python language settings to **3.12** (Pip). Writes **`post-import-cleanup-report.json`** (version 3). **`--dry-run`** prints the report to stdout without DELETE, PUT, or PATCH. Requires `SNYK_INTEGRATIONS_API=v1` for integration settings only. On single-tenant Snyk, set `SNYK_API` to your tenant origin (not `https://api.snyk.io`). **Destructive** — run dry-run first. Existing Python projects may need a re-test for scan results to reflect the new version.
 
 ## Configuration by stage
 
@@ -289,7 +289,7 @@ Uses `SNYK_TOKEN` and **`SNYK_INTEGRATIONS_API=v1`** (required). Processes only 
 |----------|----------|-------------|
 | `SNYK_TOKEN` | Yes | Snyk API token. |
 | `SNYK_GROUP_ID` | Yes | UUID of the Snyk **Group** whose orgs are normalized. |
-| `SNYK_USER_ID` | Yes | Snyk user UUID for project owner on recurring-test settings PATCH. |
+| `SNYK_USER_ID` | Yes | Snyk user UUID **required in the PATCH body** for recurring-test updates (`relationships.owner`). Not the intended permanent owner — Stage 4 restores prior ownership after PATCH. |
 | `SNYK_INTEGRATIONS_API` | Yes | Must be `v1` (default). Integration settings PUT is not implemented for REST. |
 | `SNYK_API` | No | Snyk API **origin** only (scheme + host), e.g. `https://api.snyk.io` or `https://api.example.my.snyk.io` on single-tenant. Required for REST project list/delete/settings and org language PATCH. |
 | `SNYK_API_VERSION` | No | REST API version query parameter (date string). Default `2024-10-15`. |
@@ -299,9 +299,9 @@ Uses `SNYK_TOKEN` and **`SNYK_INTEGRATIONS_API=v1`** (required). Processes only 
 |------|-------------|
 | `--output PATH` | Cleanup report (default: `post-import-cleanup-report.json`). |
 | `--dry-run` | Print report JSON to stdout; no DELETE, PUT, or PATCH. |
-| `--user-id UUID` | Override `SNYK_USER_ID` for project settings PATCH owner. |
+| `--user-id UUID` | Override `SNYK_USER_ID` transition user for project settings PATCH. |
 
-**Dry-run vs live:** `--dry-run` skips DELETE, PUT, and PATCH — it will not surface HTTP 400 from project-settings PATCH. Live runs require `SNYK_USER_ID` (REST PATCH needs `relationships.owner`). PATCH HTTP 404 on a project already deleted in the dockerfile step is recorded as `recurring_test_frequency.skipped` with `reason: project_not_found`.
+**Dry-run vs live:** `--dry-run` skips DELETE, PUT, and PATCH — it will not surface HTTP 400 from project-settings PATCH. Live runs require `SNYK_USER_ID` (REST PATCH needs `relationships.owner`). After each successful frequency PATCH, Stage 4 clears or restores project ownership so `SNYK_USER_ID` is not left as permanent owner on previously unassigned or differently owned projects. PATCH HTTP 404 on a project already deleted in the dockerfile step is recorded as `recurring_test_frequency.skipped` with `reason: project_not_found`.
 
 Processes **every org** in the group. **Destructive** — deletes Dockerfile Snyk projects; run `--dry-run` first.
 
@@ -448,7 +448,9 @@ After enrichment, targets include resolved `orgId` and `integrationId` where the
 
 ### `post-import-cleanup-report.json` (Stage 4)
 
-Version 2 report with per-org outcomes under `dockerfile_projects`, `recurring_test_frequency`, `integration_settings`, and `python_language_settings` (each with `deleted`/`updated`, `skipped`, and `failed` arrays as applicable). Metadata includes `group_id`, `settings_profile` (`bitbucket-server-default-v1`), and `python_version` (`3.12`).
+Version 3 report with per-org outcomes under `dockerfile_projects`, `recurring_test_frequency`, `project_owner_remediation`, `integration_settings`, and `python_language_settings` (each with `deleted`/`updated`/`cleared`/`restored`, `skipped`, and `failed` arrays as applicable). Metadata includes `group_id`, `transition_user_id` (the `SNYK_USER_ID` used for PATCH), `settings_profile` (`bitbucket-server-default-v1`), and `python_version` (`3.12`).
+
+`project_owner_remediation` records ownership restore after recurring-test PATCH: `cleared` (previously unassigned), `restored` (prior owner UUID), `skipped` (e.g. `already_transition_user`, `dry_run`, `frequency_patch_failed`), and `failed`.
 
 ## YAML file format (Stage 1 Bitbucket)
 
@@ -579,7 +581,7 @@ When a target is not matched, the report includes:
 1. Regenerate `diff.json` with `lookup_target_reference.py` using tenant `SNYK_API` and `SNYK_TOKEN`.
 2. Dry-run reimport on a known mismatch, e.g. `BB/uat-bitbucket-java-sample` with `--limit 5`; confirm match or actionable diagnostics (not silent `target_not_found`).
 3. Live reimport on 1–2 repos; verify Snyk target `target_reference` equals `production_branch` after import.
-4. Stage 4: set `SNYK_USER_ID`, run `--dry-run`, then live on one org; confirm recurring-test PATCH succeeds (dry-run skips PATCH — live run validates owner `user_id`).
+4. Stage 4: set `SNYK_USER_ID`, run `--dry-run`, then live on one org; confirm recurring-test PATCH succeeds (dry-run skips PATCH — live run validates transition `user_id`). After live run, confirm a project with a pre-existing owner still has that owner, and a previously unassigned project remains unassigned (check `project_owner_remediation` in the report).
 
 UAT dry-run example:
 
@@ -606,9 +608,9 @@ PYTHONPATH=src python scripts/reimport_mismatched_targets.py \
 
 ### Clear project owners (`scripts/clear_project_owners.py`)
 
-One-off cleanup after **Stage 4** live runs. Stage 4 PATCHes recurring test frequency via REST and requires `SNYK_USER_ID` in `relationships.owner`, which **assigns a project owner** on every project touched — including projects that were previously unassigned. This script clears those owners with v1 `PUT /v1/org/{orgId}/project/{projectId}` and body `{"owner": null}`.
+**Legacy / bulk tool.** Stage 4 now preserves project ownership automatically after recurring-test PATCH (see Stage 4 above). Use this script only to revert owners from **older Stage 4 runs** (before built-in remediation) or to clear **all** owners in a group or org list regardless of prior state.
 
-A future Stage 4 change will preserve existing project owners (or use a transition UUID to keep unassigned projects unassigned). Until then, run this script after Stage 4 if you need owners reverted.
+The script clears every project owner in scope with v1 `PUT /v1/org/{orgId}/project/{projectId}` and body `{"owner": null}` — it does not selectively restore prior owners.
 
 **Not destructive to projects** — only clears the owner field. Run `--dry-run` first.
 

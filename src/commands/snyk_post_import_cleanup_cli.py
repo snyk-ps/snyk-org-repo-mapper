@@ -21,8 +21,8 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Stage 4 — Delete Dockerfile projects, set recurring test frequency to never, "
             "apply integration settings, and set org Python language version to 3.12 "
-            "for every org in SNYK_GROUP_ID. Requires SNYK_USER_ID (or --user-id) for "
-            "project settings PATCH owner."
+            "for every org in SNYK_GROUP_ID. Requires SNYK_USER_ID (or --user-id) as "
+            "transition owner for project settings PATCH; ownership is restored afterward."
         ),
     )
     parser.add_argument(
@@ -47,7 +47,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--user-id",
         default=None,
         metavar="UUID",
-        help="Snyk user id for project owner on settings PATCH (or SNYK_USER_ID).",
+        help=(
+            "Snyk user id required in PATCH relationships.owner (or SNYK_USER_ID); "
+            "not the intended permanent owner — Stage 4 restores prior ownership."
+        ),
     )
     return parser
 
@@ -56,6 +59,7 @@ def _report_has_failures(report: dict[str, object]) -> bool:
     for section in (
         "dockerfile_projects",
         "recurring_test_frequency",
+        "project_owner_remediation",
         "integration_settings",
         "python_language_settings",
     ):

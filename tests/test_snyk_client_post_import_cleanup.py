@@ -193,3 +193,27 @@ def test_clear_project_owner_put() -> None:
     assert captured["method"] == "PUT"
     assert captured["url"] == "https://api.snyk.io/v1/org/org-uuid/project/proj-uuid"
     assert json.loads(captured["data"]) == {"owner": None}
+
+
+def test_set_project_owner_put() -> None:
+    captured: dict[str, object] = {}
+
+    def fake_urlopen(req: object, timeout: float | None = None) -> object:
+        captured["method"] = getattr(req, "method", None)
+        captured["url"] = getattr(req, "full_url", None)
+        captured["data"] = getattr(req, "data", None)
+        return BytesIO(b"{}")
+
+    client = SnykRestClient(_settings())
+    with patch("integrations.snyk.client.urlopen", side_effect=fake_urlopen):
+        client.set_project_owner("org-uuid", "proj-uuid", "prior-owner-uuid")
+
+    assert captured["method"] == "PUT"
+    assert captured["url"] == "https://api.snyk.io/v1/org/org-uuid/project/proj-uuid"
+    assert json.loads(captured["data"]) == {"owner": {"id": "prior-owner-uuid"}}
+
+
+def test_set_project_owner_rejects_empty_user_id() -> None:
+    client = SnykRestClient(_settings())
+    with pytest.raises(ValueError, match="user_id is required"):
+        client.set_project_owner("org-uuid", "proj-uuid", "  ")

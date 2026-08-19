@@ -23,17 +23,88 @@ def test_run_post_import_cleanup_dry_run() -> None:
 
     report = run_post_import_cleanup(client, user_id="user-1", dry_run=True)
 
-    assert report["version"] == 2
+    assert report["version"] == 3
     assert report["group_id"] == "group-uuid"
+    assert report["transition_user_id"] == "user-1"
     assert report["settings_profile"] == SETTINGS_PROFILE_ID
     assert report["python_version"] == PYTHON_LANGUAGE_VERSION
     assert report["dockerfile_projects"]["skipped"][0]["reason"] == "dry_run"
     assert report["recurring_test_frequency"]["skipped"][0]["project_id"] == "p1"
+    assert report["project_owner_remediation"]["skipped"][0]["reason"] == "dry_run"
     assert report["integration_settings"]["skipped"][0]["reason"] == "dry_run"
     assert report["python_language_settings"]["skipped"][0]["reason"] == "dry_run"
     client.delete_org_project.assert_not_called()
     client.update_project_settings.assert_not_called()
+    client.clear_project_owner.assert_not_called()
+    client.set_project_owner.assert_not_called()
     client.patch_org_language_settings.assert_not_called()
+
+
+def test_run_post_import_cleanup_clears_owner_when_unassigned() -> None:
+    client = MagicMock()
+    client.group_id = "group-uuid"
+    client.iter_group_orgs.return_value = [{"id": "org-1", "name": "APM1"}]
+    client.iter_org_projects.side_effect = [
+        [],
+        [{"id": "p1", "name": "App", "type": "npm"}],
+    ]
+    client.iter_org_integrations.return_value = [
+        {"id": "int-1", "type": "bitbucket-server"}
+    ]
+
+    report = run_post_import_cleanup(client, user_id="user-1", dry_run=False)
+
+    assert len(report["recurring_test_frequency"]["updated"]) == 1
+    assert len(report["project_owner_remediation"]["cleared"]) == 1
+    client.update_project_settings.assert_called_once()
+    client.clear_project_owner.assert_called_once_with("org-1", "p1")
+    client.set_project_owner.assert_not_called()
+
+
+def test_run_post_import_cleanup_restores_prior_owner() -> None:
+    client = MagicMock()
+    client.group_id = "group-uuid"
+    client.iter_group_orgs.return_value = [{"id": "org-1", "name": "APM1"}]
+    client.iter_org_projects.side_effect = [
+        [],
+        [{"id": "p1", "name": "App", "type": "npm", "owner_id": "prior-owner"}],
+    ]
+    client.iter_org_integrations.return_value = [
+        {"id": "int-1", "type": "bitbucket-server"}
+    ]
+
+    report = run_post_import_cleanup(client, user_id="user-1", dry_run=False)
+
+    assert len(report["project_owner_remediation"]["restored"]) == 1
+    assert (
+        report["project_owner_remediation"]["restored"][0]["prior_owner_id"]
+        == "prior-owner"
+    )
+    client.set_project_owner.assert_called_once_with("org-1", "p1", "prior-owner")
+    client.clear_project_owner.assert_not_called()
+
+
+def test_run_post_import_cleanup_skips_remediation_for_transition_user() -> None:
+    client = MagicMock()
+    client.group_id = "group-uuid"
+    client.iter_group_orgs.return_value = [{"id": "org-1", "name": "APM1"}]
+    client.iter_org_projects.side_effect = [
+        [],
+        [{"id": "p1", "name": "App", "type": "npm", "owner_id": "user-1"}],
+    ]
+    client.iter_org_integrations.return_value = [
+        {"id": "int-1", "type": "bitbucket-server"}
+    ]
+
+    report = run_post_import_cleanup(client, user_id="user-1", dry_run=False)
+
+    assert len(report["project_owner_remediation"]["skipped"]) == 1
+    assert (
+        report["project_owner_remediation"]["skipped"][0]["reason"]
+        == "already_transition_user"
+    )
+    client.clear_project_owner.assert_not_called()
+    client.set_project_owner.assert_not_called()
 
 
 def test_run_post_import_cleanup_applies_changes() -> None:
@@ -61,6 +132,7 @@ def test_run_post_import_cleanup_applies_changes() -> None:
         {"recurringTests": {"frequency": "never"}},
         "user-1",
     )
+    client.clear_project_owner.assert_called_once_with("org-1", "p1")
     client.patch_org_language_settings.assert_called_once()
 
 
@@ -76,6 +148,11 @@ def test_run_post_import_cleanup_records_partial_failures() -> None:
 
     assert len(report["recurring_test_frequency"]["failed"]) == 1
     assert len(report["integration_settings"]["failed"]) == 1
+    assert len(report["project_owner_remediation"]["skipped"]) == 1
+    assert (
+        report["project_owner_remediation"]["skipped"][0]["reason"]
+        == "frequency_patch_failed"
+    )
 
 
 def test_run_post_import_cleanup_skips_patch_404() -> None:
@@ -95,6 +172,31 @@ def test_run_post_import_cleanup_skips_patch_404() -> None:
     assert len(report["recurring_test_frequency"]["skipped"]) == 1
     assert report["recurring_test_frequency"]["skipped"][0]["reason"] == "project_not_found"
     assert report["recurring_test_frequency"]["failed"] == []
+    assert len(report["project_owner_remediation"]["skipped"]) == 1
+    assert (
+        report["project_owner_remediation"]["skipped"][0]["reason"]
+        == "frequency_patch_skipped"
+    )
+
+
+def test_run_post_import_cleanup_records_owner_remediation_failure() -> None:
+    client = MagicMock()
+    client.group_id = "group-uuid"
+    client.iter_group_orgs.return_value = [{"id": "org-1", "name": "APM1"}]
+    client.iter_org_projects.side_effect = [
+        [],
+        [{"id": "p1", "name": "App", "type": "npm"}],
+    ]
+    client.clear_project_owner.side_effect = RuntimeError("forbidden")
+    client.iter_org_integrations.return_value = [
+        {"id": "int-1", "type": "bitbucket-server"}
+    ]
+
+    report = run_post_import_cleanup(client, user_id="user-1", dry_run=False)
+
+    assert len(report["recurring_test_frequency"]["updated"]) == 1
+    assert len(report["project_owner_remediation"]["failed"]) == 1
+    assert report["project_owner_remediation"]["failed"][0]["error"] == "forbidden"
 
 
 def test_run_post_import_cleanup_records_python_language_failure() -> None:
@@ -177,4 +279,33 @@ def test_cli_writes_report(tmp_path: Path, monkeypatch) -> None:
     assert rc == 0
     data = json.loads(out_path.read_text(encoding="utf-8"))
     assert data["group_id"] == "group-uuid"
+    assert data["version"] == 3
     assert data["integration_settings"]["updated"][0]["org_id"] == "org-1"
+
+
+def test_cli_exits_nonzero_on_owner_remediation_failure(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("SNYK_TOKEN", "t")
+    monkeypatch.setenv("SNYK_GROUP_ID", "group-uuid")
+    monkeypatch.setenv("SNYK_INTEGRATIONS_API", "v1")
+    monkeypatch.setenv("SNYK_USER_ID", "user-1")
+
+    out_path = tmp_path / "post-import-cleanup-report.json"
+    fake_client = MagicMock()
+    fake_client.group_id = "group-uuid"
+    fake_client.iter_group_orgs.return_value = [{"id": "org-1", "name": "APM1"}]
+    fake_client.iter_org_projects.side_effect = [
+        [],
+        [{"id": "p1", "name": "App", "type": "npm"}],
+    ]
+    fake_client.iter_org_integrations.return_value = [
+        {"id": "int-1", "type": "bitbucket-server"}
+    ]
+    fake_client.clear_project_owner.side_effect = RuntimeError("forbidden")
+
+    with patch(
+        "commands.snyk_post_import_cleanup_cli.SnykRestClient",
+        return_value=fake_client,
+    ):
+        rc = cleanup_main(["--output", str(out_path)])
+
+    assert rc == 1

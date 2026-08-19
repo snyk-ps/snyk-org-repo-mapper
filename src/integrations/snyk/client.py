@@ -581,6 +581,45 @@ class SnykRestClient:
             retry=_is_retriable_request_failure,
         )
 
+    def set_project_owner(self, org_id: str, project_id: str, user_id: str) -> None:
+        """Set project owner via Snyk v1 PUT ``{\"owner\": {\"id\": \"<uuid>\"}}``."""
+        uid = user_id.strip()
+        if not uid:
+            msg = "user_id is required for set_project_owner"
+            raise ValueError(msg)
+        oid = org_id.strip()
+        pid = project_id.strip()
+        url = f"{self._settings.v1_root}/org/{oid}/project/{pid}"
+        body = json.dumps({"owner": {"id": uid}}).encode("utf-8")
+        req = Request(
+            url,
+            data=body,
+            headers={
+                "Authorization": f"token {self._settings.token}",
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            },
+            method="PUT",
+        )
+
+        def inner() -> None:
+            try:
+                with urlopen(req, timeout=self._timeout) as resp:
+                    resp.read()
+            except HTTPError as exc:
+                if not _is_retriable_request_failure(exc):
+                    detail = exc.read().decode("utf-8", errors="replace")
+                    msg = f"Snyk API HTTP {exc.code} for {url}: {detail[:500]}"
+                    raise RuntimeError(msg) from exc
+                raise
+
+        run_with_retries(
+            inner,
+            max_attempts=self._settings.http_max_attempts,
+            base_backoff_s=self._settings.http_backoff_seconds,
+            retry=_is_retriable_request_failure,
+        )
+
     def clear_project_owner(self, org_id: str, project_id: str) -> None:
         """Clear project owner via Snyk v1 PUT ``{\"owner\": null}``."""
         oid = org_id.strip()

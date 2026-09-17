@@ -14,6 +14,7 @@ class Settings:
     bitbucket_url: str
     bitbucket_pat: str
     file_path: str
+    include_archived: bool
     http_max_attempts: int
     http_backoff_seconds: float
     flush_interval: int
@@ -76,6 +77,12 @@ def _parse_float(name: str, raw: str | None, default: float, *, minimum: float =
     return value
 
 
+def _parse_bool(name: str, raw: str | None, *, default: bool = False) -> bool:
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip().lower() in {"1", "true", "yes"}
+
+
 def load_settings() -> Settings:
     """Build settings from the environment (after optional ``load_dotenv_file``)."""
     base = os.environ.get("BITBUCKET_URL", "").strip().rstrip("/")
@@ -99,6 +106,10 @@ def load_settings() -> Settings:
         default=1,
         minimum=1,
     )
+    include_archived = _parse_bool(
+        "BITBUCKET_INCLUDE_ARCHIVED",
+        os.environ.get("BITBUCKET_INCLUDE_ARCHIVED"),
+    )
     if not base:
         msg = "BITBUCKET_URL is required"
         raise ValueError(msg)
@@ -112,6 +123,7 @@ def load_settings() -> Settings:
         bitbucket_url=base,
         bitbucket_pat=pat,
         file_path=file_path,
+        include_archived=include_archived,
         http_max_attempts=http_retries,
         http_backoff_seconds=http_backoff,
         flush_interval=flush_interval,

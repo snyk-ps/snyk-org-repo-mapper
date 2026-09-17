@@ -27,6 +27,7 @@ def test_load_settings_reads_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BITBUCKET_HTTP_RETRIES", "3")
     monkeypatch.setenv("BITBUCKET_HTTP_BACKOFF_S", "2.5")
     monkeypatch.setenv("BITBUCKET_FLUSH_INTERVAL", "4")
+    monkeypatch.setenv("BITBUCKET_INCLUDE_ARCHIVED", "true")
     s = load_settings()
     assert s.bitbucket_url == "https://bb.example/bitbucket"
     assert s.bitbucket_pat == "token"
@@ -34,6 +35,22 @@ def test_load_settings_reads_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.http_max_attempts == 3
     assert s.http_backoff_seconds == 2.5
     assert s.flush_interval == 4
+    assert s.include_archived is True
+
+
+def test_load_settings_include_archived_truthy_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BITBUCKET_URL", "https://bb.example")
+    monkeypatch.setenv("BITBUCKET_PAT", "token")
+    for value in ("1", "YES", "True"):
+        monkeypatch.setenv("BITBUCKET_INCLUDE_ARCHIVED", value)
+        assert load_settings().include_archived is True
+
+
+def test_load_settings_include_archived_defaults_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BITBUCKET_URL", "https://bb.example")
+    monkeypatch.setenv("BITBUCKET_PAT", "token")
+    monkeypatch.delenv("BITBUCKET_INCLUDE_ARCHIVED", raising=False)
+    assert load_settings().include_archived is False
 
 
 def test_load_settings_defaults(monkeypatch: pytest.MonkeyPatch) -> None:

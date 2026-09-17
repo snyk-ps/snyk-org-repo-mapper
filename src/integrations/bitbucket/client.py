@@ -13,6 +13,10 @@ from urllib.request import Request, urlopen
 
 from integrations.http_retry import run_with_retries
 
+_LATEST_COMMIT_METADATA_KEY = (
+    "com.atlassian.bitbucket.server.bitbucket-branch:latest-commit-metadata"
+)
+
 
 def iter_paged_values(payload: dict[str, Any]) -> Iterator[dict[str, Any]]:
     """Yield ``values`` entries from a paginated Bitbucket JSON object."""
@@ -161,6 +165,70 @@ def _is_retriable_request_failure(exc: BaseException) -> bool:
     if isinstance(exc, HTTPError):
         return exc.code in (429, 500, 502, 503, 504)
     return False
+
+
+def _branch_tip_commit(branch: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the embedded tip commit object from a branch with ``details=true``."""
+    metadata = branch.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    commit = metadata.get(_LATEST_COMMIT_METADATA_KEY)
+    return commit if isinstance(commit, dict) else None
+
+
+def branch_tip_timestamp_ms(branch: dict[str, Any]) -> int | None:
+    """Return the tip commit timestamp for a branch listing entry."""
+    commit = _branch_tip_commit(branch)
+    if commit is not None:
+        return _commit_timestamp_ms(commit)
+    return None
+
+
+def branch_at_ref(branch: dict[str, Any]) -> tuple[str, str] | None:
+    """Return ``(at_ref, display_id)`` for a branch listing entry."""
+    ref_id = branch.get("id")
+    display = branch.get("displayId")
+    if isinstance(ref_id, str) and ref_id.startswith("refs/"):
+        disp = display if isinstance(display, str) and display else ref_id.rsplit("/", maxsplit=1)[-1]
+        return ref_id, disp
+    if isinstance(display, str) and display:
+        return f"refs/heads/{display}", display
+    return None
+
+
+def resolve_latest_active_branch(
+    client: BitbucketServerClient,
+    project_key: str,
+    repo_slug: str,
+) -> tuple[str, str, dict[str, Any]] | None:
+    """Return ``(at_ref, display_id, tip_commit)`` for the branch with the newest tip commit."""
+    best: tuple[str, str, dict[str, Any]] | None = None
+    best_ts: int | None = None
+    best_display: str | None = None
+
+    for branch in client.iter_branches(project_key, repo_slug, details=True):
+        ts = branch_tip_timestamp_ms(branch)
+        if ts is None:
+            continue
+        at_ref_disp = branch_at_ref(branch)
+        if at_ref_disp is None:
+            continue
+        commit = _branch_tip_commit(branch)
+        if commit is None:
+            continue
+        at_ref, display = at_ref_disp
+        if (
+            best is None
+            or best_ts is None
+            or best_display is None
+            or ts > best_ts
+            or (ts == best_ts and display < best_display)
+        ):
+            best = (at_ref, display, commit)
+            best_ts = ts
+            best_display = display
+
+    return best
 
 
 def resolve_repository_branch(
@@ -425,6 +493,33 @@ class BitbucketServerClient:
             msg = "Network error calling Bitbucket branches/default API"
             raise RuntimeError(msg) from exc
 
+    def iter_branches(
+        self,
+        project_key: str,
+        repo_slug: str,
+        *,
+        details: bool = True,
+        page_limit: int = 100,
+    ) -> Iterator[dict[str, Any]]:
+        """Yield branches in a repository (paginated)."""
+        pk = quote(project_key, safe="")
+        slug = quote(repo_slug, safe="")
+        details_q = "true" if details else "false"
+        start = 0
+        while True:
+            path = (
+                f"rest/api/1.0/projects/{pk}/repos/{slug}/branches"
+                f"?details={details_q}&limit={page_limit}&start={start}"
+            )
+            page = self._request_json(path)
+            yield from iter_paged_values(page)
+            if page.get("isLastPage", True):
+                break
+            next_start = page.get("nextPageStart")
+            if not isinstance(next_start, int):
+                break
+            start = next_start
+
     def repository_latest_commit(
         self,
         project_key: str,
@@ -434,6 +529,22 @@ class BitbucketServerClient:
         pk = quote(project_key, safe="")
         slug = quote(repo_slug, safe="")
         path = f"rest/api/1.0/projects/{pk}/repos/{slug}/commits?limit=1"
+        page = self._request_json(path)
+        for commit in iter_paged_values(page):
+            return commit
+        return None
+
+    def repository_latest_commit_on_ref(
+        self,
+        project_key: str,
+        repo_slug: str,
+        at_ref: str,
+    ) -> dict[str, Any] | None:
+        """Return the latest commit on ``at_ref``, or ``None`` when no commits exist."""
+        pk = quote(project_key, safe="")
+        slug = quote(repo_slug, safe="")
+        at_q = quote(at_ref, safe="")
+        path = f"rest/api/1.0/projects/{pk}/repos/{slug}/commits?until={at_q}&limit=1"
         page = self._request_json(path)
         for commit in iter_paged_values(page):
             return commit

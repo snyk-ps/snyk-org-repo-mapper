@@ -135,7 +135,7 @@ pip install -e ".[dev]"
 
 ### Stage 1 — `discover bitbucket`, `discover spreadsheet`, or `discover github`
 
-**Bitbucket** walks projects and repositories, checks each repo for commits (zero commits → `is_empty: true`), records **`last_committer_name`** and **`last_committer_email`** from the latest commit when not empty (API `committer`, falling back to `author`), **`last_commit_date`** as UTC ISO-8601 from `committerTimestamp` (falling back to `authorTimestamp`), reads a YAML file from non-empty repos (see [YAML format](#yaml-file-format)), merges AppSec fields with API metadata, and either prints a JSON **array of rows** to stdout or writes **discovery JSON** with `-o` / `--output`. With `-o`, also writes **`bitbucket-empty-repos.json`** by default listing empty repositories (override with `--empty-repos-output`; disable with `--no-empty-repos-output`).
+**Bitbucket** walks projects and repositories (archived repos are **skipped by default**; use **`--include-archived`** or **`BITBUCKET_INCLUDE_ARCHIVED`** to include them), checks each repo for commits (zero commits → `is_empty: true`), determines **`latest_active_branch`** as the branch with the most recent tip commit, reads the configured AppSec YAML file (`BITBUCKET_FILE_PATH`, default `appsec.yaml`) from that branch only, sets **`apm_code`** and **`production_branch`** strictly from YAML (no default-branch fallback for `production_branch`), records **`bitbucket_default_branch`**, **`latest_active_branch`**, and **`is_archived`**, and records **`last_committer_name`**, **`last_committer_email`**, and **`last_commit_date`** from the tip commit on **`latest_active_branch`** when not empty (API `committer`, falling back to `author`). Writes discovery JSON with `-o` / `--output`, or prints a JSON **array of rows** to stdout. With `-o`, also writes **`bitbucket-empty-repos.json`** by default (override with `--empty-repos-output`; disable with `--no-empty-repos-output`).
 
 **Spreadsheet** reads `bb-repo-mapping.xlsx` (project keys + semicolon-delimited repo slugs), queries Bitbucket per repo for YAML-derived APM and full row metadata (see [Stage 1 (spreadsheet)](#stage-1-spreadsheet)), and writes discovery JSON with `source: bitbucket`.
 
@@ -179,9 +179,11 @@ Iterates **every org** in `SNYK_GROUP_ID` and, per org: **lists** projects via t
 | `BITBUCKET_HTTP_RETRIES` | No | Max attempts per HTTP call (including first). Default `5`. |
 | `BITBUCKET_HTTP_BACKOFF_S` | No | Base seconds for exponential backoff. Default `1.0`. |
 | `BITBUCKET_FLUSH_INTERVAL` | No | When using `-o`, flush discovery every **N** new repos. Default `1`; overridable with `--flush-interval`. |
+| `BITBUCKET_INCLUDE_ARCHIVED` | No | When truthy (`1`, `true`, `yes`), include archived repositories in discovery. Default off. Overridable with `--include-archived`. |
 
 | Flag | Description |
 |------|-------------|
+| `--include-archived` | Include archived Bitbucket repositories in discovery output. |
 | `--empty-repos-output PATH` | Write empty-repository list JSON (default: `bitbucket-empty-repos.json` when `-o` is set). |
 | `--no-empty-repos-output` | Do not write the empty-repos file even when `-o` is set. |
 
@@ -348,6 +350,9 @@ PYTHONPATH=src python src/main.py snyk-post-import-cleanup -h
       "repository_name": "my-service",
       "production_branch": "main",
       "bitbucket_project_name": "My Project",
+      "bitbucket_default_branch": "main",
+      "latest_active_branch": "develop",
+      "is_archived": false,
       "is_empty": false,
       "last_committer_name": "charlie",
       "last_committer_email": "charlie@example.com",
@@ -383,7 +388,7 @@ GitHub rows use **`github_org`** (org login) instead of `bitbucket_project_name`
 }
 ```
 
-`checkpoint` may be `null` when empty or not yet written. **Stdout** (no `-o`) is still a **bare array** of the same row objects. Bitbucket rows include **`is_empty`** (`true` when the repo has zero commits), **`last_committer_name`** / **`last_committer_email`** (`null` when empty; from the latest commit otherwise), and **`last_commit_date`** (`null` when empty; UTC ISO-8601 from the latest commit otherwise). Spreadsheet rows omit `is_empty` and committer fields; Stage 3 treats missing `is_empty` as not empty. Stages 2–3 do not use committer or commit-date metadata.
+`checkpoint` may be `null` when empty or not yet written. **Stdout** (no `-o`) is still a **bare array** of the same row objects. Bitbucket rows include **`is_empty`** (`true` when the repo has zero commits), **`bitbucket_default_branch`**, **`latest_active_branch`**, **`is_archived`**, **`last_committer_name`** / **`last_committer_email`** (`null` when empty; from the tip commit on `latest_active_branch` otherwise), and **`last_commit_date`** (`null` when empty; UTC ISO-8601 from that commit otherwise). **`production_branch`** comes only from AppSec YAML on `latest_active_branch` and may be `null` when YAML omits `productionBranch`. Archived repositories are omitted from output unless `--include-archived` or `BITBUCKET_INCLUDE_ARCHIVED` is set. Spreadsheet rows omit `is_empty` and committer fields; Stage 3 treats missing `is_empty` as not empty. Stages 2–3 do not use committer, commit-date, or branch metadata fields.
 
 ### `bitbucket-empty-repos.json` (Stage 1 Bitbucket, with `-o`)
 

@@ -37,8 +37,20 @@ def test_main_stdout_json_array(mock_client_cls, tmp_path: Path, capsys, monkeyp
         "project": {"key": "MYPROJ", "name": "My Project"},
     }
     client.repository_latest_commit.return_value = {
-        "committer": {"name": "dev", "emailAddress": "dev@example.com"},
+        "committerTimestamp": 1_704_067_200_000,
     }
+    client.iter_branches.return_value = [
+        {
+            "id": "refs/heads/main",
+            "displayId": "main",
+            "metadata": {
+                "com.atlassian.bitbucket.server.bitbucket-branch:latest-commit-metadata": {
+                    "committer": {"name": "dev", "emailAddress": "dev@example.com"},
+                    "committerTimestamp": 1_704_067_200_000,
+                }
+            },
+        }
+    ]
     client.fetch_raw_file.return_value = b"security:\n  apmCode: APM1\n"
 
     inp = tmp_path / "mini.xlsx"

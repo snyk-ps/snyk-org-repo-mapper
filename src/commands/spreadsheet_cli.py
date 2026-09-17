@@ -94,6 +94,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Do not write bitbucket-empty-repos.json even when -o/--output is set.",
     )
+    parser.add_argument(
+        "--include-archived",
+        action="store_true",
+        help=(
+            "Include archived Bitbucket repositories in discovery output. "
+            "Also enabled when BITBUCKET_INCLUDE_ARCHIVED is truthy."
+        ),
+    )
     return parser
 
 
@@ -151,6 +159,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         empty_repos_output=args.empty_repos_output,
         no_empty_repos_output=args.no_empty_repos_output,
     )
+    include_archived = settings.include_archived or args.include_archived
 
     try:
         if args.output:
@@ -163,6 +172,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     repo_targets,
                     completed_keys=completed,
                     max_repos=args.max_repos,
+                    include_archived=include_archived,
                 )
 
             run_discovery_with_file_output(
@@ -179,6 +189,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     repo_targets,
                     completed_keys=set(),
                     max_repos=args.max_repos,
+                    include_archived=include_archived,
                 )
             )
             text = json.dumps(rows, indent=2, ensure_ascii=False) + "\n"
